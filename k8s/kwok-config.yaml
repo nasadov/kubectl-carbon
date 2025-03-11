@@ -1,0 +1,926 @@
+apiVersion: config.kwok.x-k8s.io/v1alpha1
+components:
+- args:
+  - --name=node0
+  - --auto-compaction-retention=1
+  - --quota-backend-bytes=8589934592
+  - --data-dir=/etcd-data
+  - --initial-advertise-peer-urls=http://0.0.0.0:2380
+  - --listen-peer-urls=http://0.0.0.0:2380
+  - --advertise-client-urls=http://0.0.0.0:2379
+  - --listen-client-urls=http://0.0.0.0:2379
+  - --initial-cluster=node0=http://0.0.0.0:2380
+  command:
+  - etcd
+  image: registry.k8s.io/etcd:3.5.11-0
+  metric:
+    host: kwok-carbon-etcd:2379
+    path: /metrics
+    scheme: http
+  name: etcd
+  ports:
+  - hostPort: 32765
+    port: 2379
+  version: 3.5.11-0
+  workDir: /home/vagrant/.kwok/clusters/carbon
+- args:
+  - --etcd-prefix=/registry
+  - --allow-privileged=true
+  - --etcd-servers=http://kwok-carbon-etcd:2379
+  - --authorization-mode=Node,RBAC
+  - --bind-address=0.0.0.0
+  - --secure-port=6443
+  - --tls-cert-file=/etc/kubernetes/pki/admin.crt
+  - --tls-private-key-file=/etc/kubernetes/pki/admin.key
+  - --client-ca-file=/etc/kubernetes/pki/ca.crt
+  - --service-account-key-file=/etc/kubernetes/pki/admin.key
+  - --service-account-signing-key-file=/etc/kubernetes/pki/admin.key
+  - --service-account-issuer=https://kubernetes.default.svc.cluster.local
+  - --proxy-client-key-file=/etc/kubernetes/pki/admin.key
+  - --proxy-client-cert-file=/etc/kubernetes/pki/admin.crt
+  command:
+  - kube-apiserver
+  image: registry.k8s.io/kube-apiserver:v1.30.4
+  links:
+  - etcd
+  metric:
+    certPath: /etc/kubernetes/pki/admin.crt
+    host: kwok-carbon-kube-apiserver:6443
+    insecureSkipVerify: true
+    keyPath: /etc/kubernetes/pki/admin.key
+    path: /metrics
+    scheme: https
+  name: kube-apiserver
+  ports:
+  - hostPort: 32766
+    port: 6443
+  version: 1.30.4
+  volumes:
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+    mountPath: /etc/kubernetes/pki/ca.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+    mountPath: /etc/kubernetes/pki/admin.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+    mountPath: /etc/kubernetes/pki/admin.key
+    readOnly: true
+  workDir: /home/vagrant/.kwok/clusters/carbon
+- args:
+  - --node-monitor-period=25s
+  - --node-monitor-grace-period=3m20s
+  - --kubeconfig=/root/.kube/config
+  - --authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics
+  - --bind-address=0.0.0.0
+  - --secure-port=10257
+  - --root-ca-file=/etc/kubernetes/pki/ca.crt
+  - --service-account-private-key-file=/etc/kubernetes/pki/admin.key
+  command:
+  - kube-controller-manager
+  image: registry.k8s.io/kube-controller-manager:v1.30.4
+  links:
+  - kube-apiserver
+  metric:
+    certPath: /etc/kubernetes/pki/admin.crt
+    host: kwok-carbon-kube-controller-manager:10257
+    insecureSkipVerify: true
+    keyPath: /etc/kubernetes/pki/admin.key
+    path: /metrics
+    scheme: https
+  name: kube-controller-manager
+  version: 1.30.4
+  volumes:
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+    mountPath: /root/.kube/config
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+    mountPath: /etc/kubernetes/pki/ca.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+    mountPath: /etc/kubernetes/pki/admin.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+    mountPath: /etc/kubernetes/pki/admin.key
+    readOnly: true
+  workDir: /home/vagrant/.kwok/clusters/carbon
+# - args:
+#   - --kubeconfig=/root/.kube/config
+#   - --authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics
+#   - --bind-address=0.0.0.0
+#   - --secure-port=10259
+#   command:
+#   - kube-scheduler
+#   image: registry.k8s.io/kube-scheduler:v1.30.4
+#   links:
+#   - kube-apiserver
+#   metric:
+#     certPath: /etc/kubernetes/pki/admin.crt
+#     host: kwok-carbon-kube-scheduler:10259
+#     insecureSkipVerify: true
+#     keyPath: /etc/kubernetes/pki/admin.key
+#     path: /metrics
+#     scheme: https
+#   name: kube-scheduler
+#   version: 1.30.4
+#   volumes:
+#   - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+#     mountPath: /root/.kube/config
+#     readOnly: true
+#   - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+#     mountPath: /etc/kubernetes/pki/ca.crt
+#     readOnly: true
+#   - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+#     mountPath: /etc/kubernetes/pki/admin.crt
+#     readOnly: true
+#   - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+#     mountPath: /etc/kubernetes/pki/admin.key
+#     readOnly: true
+#   workDir: /home/vagrant/.kwok/clusters/carbon
+- args:
+  - --authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics
+  - --bind-address=0.0.0.0
+  - --secure-port=10260
+  - --config=/etc/kubernetes/fogatlas-scheduler/fogatlas-scheduler-config.yaml
+  - --leader-elect=false
+  - --feature-gates=SchedulerQueueingHints=true
+  - --v=10
+  command:
+  - kube-scheduler
+  image: gitlab-registry.fbk.eu/fogatlas-k8s/scheduler-plugins/kube-scheduler:v0.28.8.3
+  links:
+  - kube-apiserver
+  metric:
+    certPath: /etc/kubernetes/pki/admin.crt
+    host: kwok-carbon-kube-scheduler:10260
+    insecureSkipVerify: true
+    keyPath: /etc/kubernetes/pki/admin.key
+    path: /metrics
+    scheme: https
+  name: fogatlas-scheduler
+  version: 1.29.2
+  volumes:
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+    mountPath: /root/.kube/config
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+    mountPath: /etc/kubernetes/pki/ca.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+    mountPath: /etc/kubernetes/pki/admin.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+    mountPath: /etc/kubernetes/pki/admin.key
+    readOnly: true
+  - hostPath: /home/vagrant/carbon/k8s/kwok-fogatlas-scheduler.yaml
+    mountPath: /etc/kubernetes/fogatlas-scheduler/fogatlas-scheduler-config.yaml
+    readOnly: true    
+  workDir: /home/vagrant/.kwok/clusters/carbon
+- args:
+  - --manage-all-nodes=true
+  - --kubeconfig=/root/.kube/config
+  - --config=/root/.kwok/kwok.yaml
+  - --tls-cert-file=/etc/kubernetes/pki/admin.crt
+  - --tls-private-key-file=/etc/kubernetes/pki/admin.key
+  - --node-ip=
+  - --node-name=kwok-carbon-kwok-controller
+  - --node-port=10247
+  - --server-address=0.0.0.0:10247
+  - --node-lease-duration-seconds=200
+  command:
+  - kwok
+  image: registry.k8s.io/kwok/kwok:v0.6.1
+  links:
+  - kube-apiserver
+  metric:
+    host: kwok-carbon-kwok-controller:10247
+    path: /metrics
+    scheme: http
+  metricsDiscovery:
+    host: kwok-carbon-kwok-controller:10247
+    path: /discovery/prometheus
+    scheme: http
+  name: kwok-controller
+  version: 0.6.1
+  volumes:
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+    mountPath: /root/.kube/config
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+    mountPath: /etc/kubernetes/pki/ca.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+    mountPath: /etc/kubernetes/pki/admin.crt
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+    mountPath: /etc/kubernetes/pki/admin.key
+    readOnly: true
+  - hostPath: /home/vagrant/.kwok/clusters/carbon/kwok.yaml
+    mountPath: /root/.kwok/kwok.yaml
+    readOnly: true
+  workDir: /home/vagrant/.kwok/clusters/carbon
+kind: KwokctlConfiguration
+metadata:
+  creationTimestamp: null
+options:
+  bindAddress: 0.0.0.0
+  cacheDir: /home/vagrant/.kwok/cache
+  dashboardImage: docker.io/kubernetesui/dashboard:v2.7.0
+  dashboardMetricsScraperImage: docker.io/kubernetesui/metrics-scraper:v1.0.9
+  dashboardMetricsScraperVersion: v1.0.9
+  dashboardVersion: v2.7.0
+  disableKubeControllerManager: false
+  disableKubeScheduler: false
+  disableQPSLimits: false
+  dockerComposeBinary: https://github.com/docker/compose/releases/download/v2.17.2/docker-compose-linux-x86_64
+  dockerComposeVersion: v2.17.2
+  enableMetricsServer: false
+  etcdBinary: https://github.com/etcd-io/etcd/releases/download/v3.5.11/etcd-v3.5.11-linux-amd64.tar.gz#etcd
+  etcdImage: registry.k8s.io/etcd:3.5.11-0
+  etcdPort: 32765
+  etcdPrefix: /registry
+  etcdVersion: 3.5.11-0
+  etcdctlBinary: https://github.com/etcd-io/etcd/releases/download/v3.5.11/etcd-v3.5.11-linux-amd64.tar.gz#etcdctl
+  heartbeatFactor: 1
+  jaegerBinary: https://github.com/jaegertracing/jaeger/releases/download/v1.58.1/jaeger-1.58.1-linux-amd64.tar.gz#jaeger-all-in-one
+  jaegerImage: docker.io/jaegertracing/all-in-one:1.58.1
+  jaegerVersion: v1.53.0
+  kindBinary: https://github.com/kubernetes-sigs/kind/releases/download/v0.23.0/kind-linux-amd64
+  kindNodeImage: docker.io/kindest/node:v1.30.4
+  kindVersion: v0.23.0
+  kubeAdmission: true
+  kubeApiserverBinary: https://dl.k8s.io/release/v1.30.4/bin/linux/amd64/kube-apiserver
+  kubeApiserverImage: registry.k8s.io/kube-apiserver:v1.30.4
+  kubeApiserverPort: 32766
+  kubeAuthorization: true
+  kubeControllerManagerBinary: https://dl.k8s.io/release/v1.30.4/bin/linux/amd64/kube-controller-manager
+  kubeControllerManagerImage: registry.k8s.io/kube-controller-manager:v1.30.4
+  kubeControllerManagerNodeMonitorGracePeriodMilliseconds: 200000
+  kubeControllerManagerNodeMonitorPeriodMilliseconds: 25000
+  kubeSchedulerBinary: https://dl.k8s.io/release/v1.30.4/bin/linux/amd64/kube-scheduler
+  kubeSchedulerImage: registry.k8s.io/kube-scheduler:v1.30.4
+  kubeVersion: v1.30.4
+  kubectlBinary: https://dl.k8s.io/release/v1.30.4/bin/linux/amd64/kubectl
+  kwokControllerBinary: https://github.com/kubernetes-sigs/kwok/releases/download/v0.6.1/kwok-linux-amd64
+  kwokControllerImage: registry.k8s.io/kwok/kwok:v0.6.1
+  kwokVersion: v0.6.1
+  metricsServerBinary: https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.1/metrics-server-linux-amd64
+  metricsServerImage: registry.k8s.io/metrics-server/metrics-server:v0.7.1
+  metricsServerVersion: v0.7.1
+  nodeLeaseDurationSeconds: 200
+  nodeStatusUpdateFrequencyMilliseconds: 50000
+  prometheusBinary: https://github.com/prometheus/prometheus/releases/download/v2.53.0/prometheus-2.53.0.linux-amd64.tar.gz#prometheus
+  prometheusImage: docker.io/prom/prometheus:v2.53.0
+  prometheusVersion: v2.53.0
+  quietPull: false
+  runtime: docker
+  runtimes:
+  - docker
+  - podman
+  - nerdctl
+  - binary
+  securePort: true
+status:
+  version: 0.6.1
+
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  creationTimestamp: null
+  name: node-initialize
+spec:
+  immediateNextStage: false
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      {{ $lastTransitionTime := or .metadata.creationTimestamp $now }}
+      conditions:
+      {{ range NodeConditions }}
+      - lastHeartbeatTime: {{ $now | Quote }}
+        lastTransitionTime: {{ $lastTransitionTime | Quote }}
+        message: {{ .message | Quote }}
+        reason: {{ .reason | Quote }}
+        status: {{ .status | Quote }}
+        type: {{ .type  | Quote}}
+      {{ end }}
+
+      addresses:
+      {{ with .status.addresses }}
+      {{ YAML . 1 }}
+      {{ else }}
+      {{ with NodeIP }}
+      - address: {{ . | Quote }}
+        type: InternalIP
+      {{ end }}
+      {{ with NodeName }}
+      - address: {{ . | Quote }}
+        type: Hostname
+      {{ end }}
+      {{ end }}
+
+      {{ with NodePort }}
+      daemonEndpoints:
+        kubeletEndpoint:
+          Port: {{ . }}
+      {{ end }}
+
+      allocatable:
+      {{ with .status.allocatable }}
+      {{ YAML . 1 }}
+      {{ else }}
+        cpu: 1k
+        memory: 1Ti
+        pods: 1M
+      {{ end }}
+      capacity:
+      {{ with .status.capacity }}
+      {{ YAML . 1 }}
+      {{ else }}
+        cpu: 1k
+        memory: 1Ti
+        pods: 1M
+      {{ end }}
+      {{ with .status.nodeInfo }}
+      nodeInfo:
+        architecture: {{ with .architecture }} {{ . }} {{ else }} "amd64" {{ end }}
+        bootID: {{ with .bootID }} {{ . }} {{ else }} "" {{ end }}
+        containerRuntimeVersion: {{ with .containerRuntimeVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        kernelVersion: {{ with .kernelVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        kubeProxyVersion: {{ with .kubeProxyVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        kubeletVersion: {{ with .kubeletVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        machineID: {{ with .machineID }} {{ . }} {{ else }} "" {{ end }}
+        operatingSystem: {{ with .operatingSystem }} {{ . }} {{ else }} "linux" {{ end }}
+        osImage: {{ with .osImage }} {{ . }} {{ else }} "" {{ end }}
+        systemUUID: {{ with .systemUUID }} {{ . }} {{ else }} "" {{ end }}
+      {{ end }}
+      phase: Running
+  resourceRef:
+    apiGroup: v1
+    kind: Node
+  selector:
+    matchExpressions:
+    - key: .status.conditions.[] | select( .type == "Ready" ) | .status
+      operator: NotIn
+      values:
+      - "True"
+status: {}
+
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  creationTimestamp: null
+  name: node-heartbeat-with-lease
+spec:
+  delay:
+    durationMilliseconds: 600000
+    jitterDurationMilliseconds: 610000
+  immediateNextStage: false
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      {{ $lastTransitionTime := or .metadata.creationTimestamp $now }}
+      conditions:
+      {{ range NodeConditions }}
+      - lastHeartbeatTime: {{ $now | Quote }}
+        lastTransitionTime: {{ $lastTransitionTime | Quote }}
+        message: {{ .message | Quote }}
+        reason: {{ .reason | Quote }}
+        status: {{ .status | Quote }}
+        type: {{ .type | Quote }}
+      {{ end }}
+
+      addresses:
+      {{ with .status.addresses }}
+      {{ YAML . 1 }}
+      {{ else }}
+      {{ with NodeIP }}
+      - address: {{ . | Quote }}
+        type: InternalIP
+      {{ end }}
+      {{ with NodeName }}
+      - address: {{ . | Quote }}
+        type: Hostname
+      {{ end }}
+      {{ end }}
+
+      {{ with NodePort }}
+      daemonEndpoints:
+        kubeletEndpoint:
+          Port: {{ . }}
+      {{ end }}
+  resourceRef:
+    apiGroup: v1
+    kind: Node
+  selector:
+    matchExpressions:
+    - key: .status.phase
+      operator: In
+      values:
+      - Running
+    - key: .status.conditions.[] | select( .type == "Ready" ) | .status
+      operator: In
+      values:
+      - "True"
+status: {}
+
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  creationTimestamp: null
+  name: node-initialize
+spec:
+  immediateNextStage: false
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      {{ $lastTransitionTime := or .metadata.creationTimestamp $now }}
+      conditions:
+      {{ range NodeConditions }}
+      - lastHeartbeatTime: {{ $now | Quote }}
+        lastTransitionTime: {{ $lastTransitionTime | Quote }}
+        message: {{ .message | Quote }}
+        reason: {{ .reason | Quote }}
+        status: {{ .status | Quote }}
+        type: {{ .type  | Quote}}
+      {{ end }}
+
+      addresses:
+      {{ with .status.addresses }}
+      {{ YAML . 1 }}
+      {{ else }}
+      {{ with NodeIP }}
+      - address: {{ . | Quote }}
+        type: InternalIP
+      {{ end }}
+      {{ with NodeName }}
+      - address: {{ . | Quote }}
+        type: Hostname
+      {{ end }}
+      {{ end }}
+
+      {{ with NodePort }}
+      daemonEndpoints:
+        kubeletEndpoint:
+          Port: {{ . }}
+      {{ end }}
+
+      allocatable:
+      {{ with .status.allocatable }}
+      {{ YAML . 1 }}
+      {{ else }}
+        cpu: 1k
+        memory: 1Ti
+        pods: 1M
+      {{ end }}
+      capacity:
+      {{ with .status.capacity }}
+      {{ YAML . 1 }}
+      {{ else }}
+        cpu: 1k
+        memory: 1Ti
+        pods: 1M
+      {{ end }}
+      {{ with .status.nodeInfo }}
+      nodeInfo:
+        architecture: {{ with .architecture }} {{ . }} {{ else }} "amd64" {{ end }}
+        bootID: {{ with .bootID }} {{ . }} {{ else }} "" {{ end }}
+        containerRuntimeVersion: {{ with .containerRuntimeVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        kernelVersion: {{ with .kernelVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        kubeProxyVersion: {{ with .kubeProxyVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        kubeletVersion: {{ with .kubeletVersion }} {{ . }} {{ else }} "kwok-{{ Version }}" {{ end }}
+        machineID: {{ with .machineID }} {{ . }} {{ else }} "" {{ end }}
+        operatingSystem: {{ with .operatingSystem }} {{ . }} {{ else }} "linux" {{ end }}
+        osImage: {{ with .osImage }} {{ . }} {{ else }} "" {{ end }}
+        systemUUID: {{ with .systemUUID }} {{ . }} {{ else }} "" {{ end }}
+      {{ end }}
+      phase: Running
+  resourceRef:
+    apiGroup: v1
+    kind: Node
+  selector:
+    matchExpressions:
+    - key: .status.conditions.[] | select( .type == "Ready" ) | .status
+      operator: NotIn
+      values:
+      - "True"
+status: {}
+
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  creationTimestamp: null
+  name: node-heartbeat-with-lease
+spec:
+  delay:
+    durationMilliseconds: 600000
+    jitterDurationMilliseconds: 610000
+  immediateNextStage: false
+  next:
+    statusSubresource: status
+    statusTemplate: |
+      {{ $now := Now }}
+      {{ $lastTransitionTime := or .metadata.creationTimestamp $now }}
+      conditions:
+      {{ range NodeConditions }}
+      - lastHeartbeatTime: {{ $now | Quote }}
+        lastTransitionTime: {{ $lastTransitionTime | Quote }}
+        message: {{ .message | Quote }}
+        reason: {{ .reason | Quote }}
+        status: {{ .status | Quote }}
+        type: {{ .type | Quote }}
+      {{ end }}
+
+      addresses:
+      {{ with .status.addresses }}
+      {{ YAML . 1 }}
+      {{ else }}
+      {{ with NodeIP }}
+      - address: {{ . | Quote }}
+        type: InternalIP
+      {{ end }}
+      {{ with NodeName }}
+      - address: {{ . | Quote }}
+        type: Hostname
+      {{ end }}
+      {{ end }}
+
+      {{ with NodePort }}
+      daemonEndpoints:
+        kubeletEndpoint:
+          Port: {{ . }}
+      {{ end }}
+  resourceRef:
+    apiGroup: v1
+    kind: Node
+  selector:
+    matchExpressions:
+    - key: .status.phase
+      operator: In
+      values:
+      - Running
+    - key: .status.conditions.[] | select( .type == "Ready" ) | .status
+      operator: In
+      values:
+      - "True"
+status: {}
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-delete
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+    - key: '.metadata.deletionTimestamp'
+      operator: 'Exists'
+    - key: '.metadata.finalizers'
+      operator: 'DoesNotExist'
+  weight: 1
+  delay:
+    durationMilliseconds: 5000
+  next:
+    delete: true
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: pod-ready
+spec:
+  resourceRef:
+    apiGroup: v1
+    kind: Pod
+  selector:
+    matchExpressions:
+    - key: '.metadata.deletionTimestamp'
+      operator: 'DoesNotExist'
+    - key: '.status.podIP'
+      operator: 'DoesNotExist'
+  next:
+    statusTemplate: |
+      {{ $now := Now }}
+
+      conditions:
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Initialized
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: Ready
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: ContainersReady
+      {{ range .spec.readinessGates }}
+      - lastTransitionTime: {{ $now | Quote }}
+        status: "True"
+        type: {{ .conditionType | Quote }}
+      {{ end }}
+
+      containerStatuses:
+      {{ range .spec.containers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: true
+        restartCount: 0
+        state:
+          running:
+            startedAt: {{ $now | Quote }}
+      {{ end }}
+
+      initContainerStatuses:
+      {{ range .spec.initContainers }}
+      - image: {{ .image | Quote }}
+        name: {{ .name | Quote }}
+        ready: true
+        restartCount: 0
+        {{ if eq .restartPolicy "Always" }}
+        started: true
+        state:
+          running:
+            startedAt: {{ $now | Quote }}
+        {{ else }}
+        state:
+          terminated:
+            exitCode: 0
+            finishedAt: {{ $now | Quote }}
+            reason: Completed
+            startedAt: {{ $now | Quote }}
+        {{ end }}
+      {{ end }}
+
+      hostIP: {{ NodeIPWith .spec.nodeName | Quote }}
+      podIP: {{ PodIPWith .spec.nodeName ( or .spec.hostNetwork false ) ( or .metadata.uid "" ) ( or .metadata.name "" ) ( or .metadata.namespace "" ) | Quote }}
+      phase: Running
+      startTime: {{ $now | Quote }}
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-1h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-1h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 60000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-2h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-2h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 120000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-3h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-3h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 180000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-4h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-4h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 240000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-5h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-5h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 300000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-6h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-6h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 360000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-7h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-7h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 420000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-8h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-8h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 480000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-9h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-9h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 540000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-10h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-10h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 600000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-11h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-11h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 660000
+  next:
+    delete: true  
+---
+apiVersion: kwok.x-k8s.io/v1alpha1
+kind: Stage
+metadata:
+  name: delete-pods-12h-stage
+spec:
+  resourceRef:
+    apiGroup: apps/v1
+    kind: Deployment
+  selector:
+    matchExpressions:
+    - key: .metadata.labels.duration
+      operator: In
+      values:
+      - duration-12h
+    - key: .status.readyReplicas
+      operator: 'Exists'
+  weight: 1
+  delay:
+    durationMilliseconds: 7200000
+  next:
+    delete: true        

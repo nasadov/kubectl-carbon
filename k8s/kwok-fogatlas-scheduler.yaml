@@ -1,0 +1,57 @@
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: /root/.kube/config
+profiles:
+  - schedulerName: fogatlas
+    plugins:
+      preEnqueue:
+        enabled:
+        - name: FogAtlas  
+      score:
+        enabled:
+        - name: FogAtlas  
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity  
+      queueSort:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity
+      preFilter:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity
+      filter:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity
+      postFilter:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      preScore:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      reserve:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      permit:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      preBind:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      bind:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      postBind:
+        disabled:
+        - name: InterPodAffinity
+        - name: NodeAffinity      
+      

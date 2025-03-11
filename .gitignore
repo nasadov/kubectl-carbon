@@ -1,0 +1,9 @@
+# Ignore following files/directories
+*~
+._*
+*.DS_Store
+\#*#
+.vagrant
+*.iml
+tmp
+bin

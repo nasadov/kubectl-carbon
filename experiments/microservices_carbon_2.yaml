@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: m004-duration-1h-deadline-25h
+  namespace: default
+  labels:
+    app: m004-duration-1h-deadline-25h
+    duration: duration-1h
+    deadline: deadline-25h
+  annotations:
+    scheduling.carbon/duration_hours: '1'
+    scheduling.carbon/deadline_hours: '25'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: m004-duration-1h-deadline-25h
+  template:
+    metadata:
+      labels:
+        name: m004-duration-1h-deadline-25h
+      annotations:
+        scheduling.carbon/duration_hours: '1'
+        scheduling.carbon/deadline_hours: '25'
+    spec:
+      schedulerName: fogatlas
+      containers:
+      - name: fake-container
+        image: fake-image
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 1000m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: m005-duration-3h-deadline-5h
+  namespace: default
+  labels:
+    app: m005-duration-3h-deadline-5h
+    duration: duration-3h
+    deadline: deadline-5h
+  annotations:
+    scheduling.carbon/duration_hours: '3'
+    scheduling.carbon/deadline_hours: '5'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: m005-duration-3h-deadline-5h
+  template:
+    metadata:
+      labels:
+        name: m005-duration-3h-deadline-5h
+      annotations:
+        scheduling.carbon/duration_hours: '3'
+        scheduling.carbon/deadline_hours: '5'
+    spec:
+      schedulerName: fogatlas
+      containers:
+      - name: fake-container
+        image: fake-image
+        resources:
+          requests:
+            memory: 512Mi
+            cpu: 250m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: m006-duration-6h-deadline-20h
+  namespace: default
+  labels:
+    app: m006-duration-6h-deadline-20h
+    duration: duration-6h
+    deadline: deadline-20h
+  annotations:
+    scheduling.carbon/duration_hours: '6'
+    scheduling.carbon/deadline_hours: '30'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: m006-duration-6h-deadline-20h
+  template:
+    metadata:
+      labels:
+        name: m006-duration-6h-deadline-20h
+      annotations:
+        scheduling.carbon/duration_hours: '6'
+        scheduling.carbon/deadline_hours: '30'
+    spec:
+      schedulerName: fogatlas
+      containers:
+      - name: fake-container
+        image: fake-image
+        resources:
+          requests:
+            memory: 1Gi
+            cpu: 500m
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: m007-duration-1h-deadline-3h
+  namespace: default
+  labels:
+    app: m007-duration-1h-deadline-3h
+    duration: duration-1h
+    deadline: deadline-3h
+  annotations:
+    scheduling.carbon/duration_hours: '1'
+    scheduling.carbon/deadline_hours: '3'
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: m007-duration-1h-deadline-3h
+  template:
+    metadata:
+      labels:
+        name: m007-duration-1h-deadline-3h
+      annotations:
+        scheduling.carbon/duration_hours: '1'
+        scheduling.carbon/deadline_hours: '3'
+    spec:
+      schedulerName: fogatlas
+      containers:
+      - name: fake-container
+        image: fake-image
+        resources:
+          requests:
+            memory: 128Mi
+            cpu: 1000m
