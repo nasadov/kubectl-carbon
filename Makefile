@@ -26,7 +26,7 @@ kwok:
 # Create the cluster
 	kwokctl -c ./k8s/kwok-config.yaml create cluster --name carbon
 # Create the nodes
-	kubectl apply -f ./experiments/nodes.yaml		
+	kubectl apply -f /root/carbon-aware-orchestrator/pkg/carbon-aware/nodes.yaml	
 # Install CRDs
 	kubectl apply -f ./k8s/fogatlas.fbk.eu_faplacements.yaml
 # Deploy unschedulable pod (needed by the custom scheduler but it doesn't affect the experiment)	

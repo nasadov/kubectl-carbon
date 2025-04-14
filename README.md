@@ -88,18 +88,124 @@ Just to compare the results obtained with carbon-aware algorithm, we use `./expe
 1. Monitor the deployment:
    ```
    watch kubectl get pods -o wide
-   ```     
+   ```
+
+## Running Experiments with the New Metrics System
+
+The carbon-aware metrics system allows you to collect, analyze, and visualize detailed metrics about carbon intensity, energy usage, and scheduling performance. It uses real carbon intensity forecasts from `all_forecasts.json` to provide accurate environmental impact measurements.
+
+### Experiment Setup
+
+1. **Prerequisites**:
+   - Complete the cluster setup steps from the previous sections
+   - Ensure the carbon-aware scheduler is running
+   - Make sure the `all_forecasts.json` file is available at its default location
+
+2. **Running a Benchmark**:
+
+   The `run_benchmark.sh` script simplifies metrics collection:
+   
+   ```bash
+   # Basic usage with default parameters
+   ./scripts/run_benchmark.sh
+   
+   # With custom parameters
+   ./scripts/run_benchmark.sh --name my_experiment --interval 30 --duration 3600 --shrink-factor 60
+   ```
+   
+   Important parameters:
+   - `--name`: Custom name for the experiment (default: timestamp-based)
+   - `--interval`: Metrics collection frequency in seconds (default: 60)
+   - `--duration`: Total experiment duration in seconds (default: 3600)
+   - `--shrink-factor`: Time acceleration factor (default: 1)
+   - `--forecast-file`: Path to carbon forecasts (default: predefined path)
+
+3. **Applying Workloads**:
+
+   There are two methods for applying workloads during your experiments:
+   
+   a) **Apply all workloads at once** with time acceleration:
+   ```bash
+   # Usage: ./scripts/applyWorkloadAll.sh [shrink_factor] [call_interval]
+   ./scripts/applyWorkloadAll.sh 60 3600
+   ```
+   This simulates 1 hour between workload applications while accelerating time by 60x.
+   
+   b) **Apply workloads hourly**:
+   ```bash
+   # Usage: ./scripts/applyWorkloadPerHour.sh [call_interval_seconds] [shrink_factor]
+   ./scripts/applyWorkloadPerHour.sh 5 3600
+   ```
+   This waits 5 real seconds between applications while simulating 1 hour per second.
+
+4. **Scheduling Gates Monitoring**:
+
+   For experiments requiring pod scheduling at specific times:
+   ```bash
+   # Run in a separate terminal or as a background process
+   ./scripts/checkSchedulingGates.sh
+   ```
+   
+   This script monitors and removes scheduling gates when the scheduled time arrives.
+
+### Analyzing Results
+
+After an experiment, results are automatically saved to the `benchmark_results` directory:
+
+1. **View Raw Data**:
+   - Check the `raw_data` subfolder for detailed CSV and JSON files of all metrics
+   - Review `benchmark.log` for experiment progress and any issues
+
+2. **View Visualizations**:
+   - The `plots` subfolder contains automatically generated graphs:
+     - Carbon intensity over time
+     - Power usage for the entire cluster
+     - CPU utilization per node
+     - Pod scheduling status
+     - Node power draw
+
+3. **Manual Analysis**:
+   ```bash
+   # Reanalyze existing data with different parameters
+   python3 ./scripts/analyze_metrics.py --data-dir ./benchmark_results/my_experiment
+   ```
+
+### Example: Full Experiment Workflow
+
+Here's a complete example demonstrating how to run an experiment with 60x time acceleration:
+
+```bash
+# Start carbon-aware algorithm in background
+cd bin && ./carbon-aware &
+
+# Start scheduling gate checker in background
+./scripts/checkSchedulingGates.sh &
+
+# Start metrics collection with 60x time acceleration
+./scripts/run_benchmark.sh --name carbon_experiment_60x --shrink-factor 60 --interval 30 &
+
+# Wait for collection to start
+sleep 5
+
+# Apply workloads with 60x acceleration and 1-hour intervals
+./scripts/applyWorkloadAll.sh 60 3600
+
+# When completed, view results
+ls -la ./benchmark_results/carbon_experiment_60x/plots/
+```
+
+This workflow will collect metrics showing the impact of carbon-aware scheduling on your workloads, with visualizations of carbon intensity, power usage, and scheduling efficiency over time.
 
 ## License
 
-Copyright 2025 Fondazione Bruno Kessler
+Copyright 2025 Fondazione Bruno Kessler and Technische Universitaet Berlin
 
-Licensed under the Apache License, Version 2.0 (the “License”); you may not use this
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this
 file except in compliance with the License. You may obtain a copy of the License
 [here](http://www.apache.org/licenses/LICENSE-2.0).
 
 Unless required by applicable law or agreed to in writing, software distributed under
-the License is distributed on an “AS IS” BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
 either express or implied. See the License for the specific language governing permissions
 and limitations under the License.
 

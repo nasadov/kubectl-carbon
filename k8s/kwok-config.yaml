@@ -22,7 +22,7 @@ components:
   - hostPort: 32765
     port: 2379
   version: 3.5.11-0
-  workDir: /home/vagrant/.kwok/clusters/carbon
+  workDir: /root/.kwok/clusters/carbon
 - args:
   - --etcd-prefix=/registry
   - --allow-privileged=true
@@ -56,16 +56,16 @@ components:
     port: 6443
   version: 1.30.4
   volumes:
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/ca.crt
     mountPath: /etc/kubernetes/pki/ca.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.crt
     mountPath: /etc/kubernetes/pki/admin.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.key
     mountPath: /etc/kubernetes/pki/admin.key
     readOnly: true
-  workDir: /home/vagrant/.kwok/clusters/carbon
+  workDir: /root/.kwok/clusters/carbon
 - args:
   - --node-monitor-period=25s
   - --node-monitor-grace-period=3m20s
@@ -90,19 +90,19 @@ components:
   name: kube-controller-manager
   version: 1.30.4
   volumes:
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+  - hostPath: /root/.kwok/clusters/carbon/kubeconfig
     mountPath: /root/.kube/config
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/ca.crt
     mountPath: /etc/kubernetes/pki/ca.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.crt
     mountPath: /etc/kubernetes/pki/admin.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.key
     mountPath: /etc/kubernetes/pki/admin.key
     readOnly: true
-  workDir: /home/vagrant/.kwok/clusters/carbon
+  workDir: /root/.kwok/clusters/carbon
 # - args:
 #   - --kubeconfig=/root/.kube/config
 #   - --authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics
@@ -123,19 +123,19 @@ components:
 #   name: kube-scheduler
 #   version: 1.30.4
 #   volumes:
-#   - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+#   - hostPath: /root/.kwok/clusters/carbon/kubeconfig
 #     mountPath: /root/.kube/config
 #     readOnly: true
-#   - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+#   - hostPath: /root/.kwok/clusters/carbon/pki/ca.crt
 #     mountPath: /etc/kubernetes/pki/ca.crt
 #     readOnly: true
-#   - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+#   - hostPath: /root/.kwok/clusters/carbon/pki/admin.crt
 #     mountPath: /etc/kubernetes/pki/admin.crt
 #     readOnly: true
-#   - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+#   - hostPath: /root/.kwok/clusters/carbon/pki/admin.key
 #     mountPath: /etc/kubernetes/pki/admin.key
 #     readOnly: true
-#   workDir: /home/vagrant/.kwok/clusters/carbon
+#   workDir: /root/.kwok/clusters/carbon
 - args:
   - --authorization-always-allow-paths=/healthz,/readyz,/livez,/metrics
   - --bind-address=0.0.0.0
@@ -159,22 +159,22 @@ components:
   name: fogatlas-scheduler
   version: 1.29.2
   volumes:
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+  - hostPath: /root/.kwok/clusters/carbon/kubeconfig
     mountPath: /root/.kube/config
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/ca.crt
     mountPath: /etc/kubernetes/pki/ca.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.crt
     mountPath: /etc/kubernetes/pki/admin.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.key
     mountPath: /etc/kubernetes/pki/admin.key
     readOnly: true
-  - hostPath: /home/vagrant/carbon/k8s/kwok-fogatlas-scheduler.yaml
+  - hostPath: /root/carbon/k8s/kwok-fogatlas-scheduler.yaml
     mountPath: /etc/kubernetes/fogatlas-scheduler/fogatlas-scheduler-config.yaml
     readOnly: true    
-  workDir: /home/vagrant/.kwok/clusters/carbon
+  workDir: /root/.kwok/clusters/carbon
 - args:
   - --manage-all-nodes=true
   - --kubeconfig=/root/.kube/config
@@ -202,28 +202,28 @@ components:
   name: kwok-controller
   version: 0.6.1
   volumes:
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/kubeconfig
+  - hostPath: /root/.kwok/clusters/carbon/kubeconfig
     mountPath: /root/.kube/config
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/ca.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/ca.crt
     mountPath: /etc/kubernetes/pki/ca.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.crt
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.crt
     mountPath: /etc/kubernetes/pki/admin.crt
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/pki/admin.key
+  - hostPath: /root/.kwok/clusters/carbon/pki/admin.key
     mountPath: /etc/kubernetes/pki/admin.key
     readOnly: true
-  - hostPath: /home/vagrant/.kwok/clusters/carbon/kwok.yaml
+  - hostPath: /root/.kwok/clusters/carbon/kwok.yaml
     mountPath: /root/.kwok/kwok.yaml
     readOnly: true
-  workDir: /home/vagrant/.kwok/clusters/carbon
+  workDir: /root/.kwok/clusters/carbon
 kind: KwokctlConfiguration
 metadata:
   creationTimestamp: null
 options:
   bindAddress: 0.0.0.0
-  cacheDir: /home/vagrant/.kwok/cache
+  cacheDir: /root/.kwok/cache
   dashboardImage: docker.io/kubernetesui/dashboard:v2.7.0
   dashboardMetricsScraperImage: docker.io/kubernetesui/metrics-scraper:v1.0.9
   dashboardMetricsScraperVersion: v1.0.9

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# Copyright 2025 Fondazione Bruno Kessler.
+# Copyright 2025 Fondazione Bruno Kessler and Carbon Contributors.
 #  
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -32,7 +32,7 @@ for pod in ${pods[@]}; do
     if [ "$time_to_schedule" -lt "$current_time" ]
     then
         echo "Going to remove scheduling gate"
-        kubectl patch pod $pod --type=json -p='[{"op": "remove", "path": "/spec/schedulingGates"}]'
+        kubectl patch pod $pod --type=json -p='[{"op": "replace", "path": "/spec/schedulingGates", "value": []}]'
     else
         echo "Still to wait $((time_to_schedule-current_time)) seconds"
     fi

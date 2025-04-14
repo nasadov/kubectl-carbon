@@ -6,4 +6,20 @@
 .vagrant
 *.iml
 tmp
-bin
+
+# Keep bin directory for important executables, but ignore compiled binaries
+/bin/*
+!/bin/.gitkeep
+
+# Ignore benchmark and metrics data
+/benchmark_results/
+/metrics/
+
+# Ignore editor-specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore logs
+*.log
