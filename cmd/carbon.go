@@ -84,6 +84,10 @@ func getClientSet(configFlags *genericclioptions.ConfigFlags) (*k8sclientset.Cli
 		log.Errorf("Unable to get config flags: (%s)", err.Error())
 		return nil, err
 	}
+
+	// Adjust the QPS (queries per second) and burst settings
+    config.QPS = 500
+    config.Burst = 1000
 	clientSet, err := k8sclientset.NewForConfig(config)
 	if err != nil {
 		log.Errorf("Unable to create k8s clientset: (%s)", err.Error())
@@ -98,6 +102,10 @@ func getFAClientSet(configFlags *genericclioptions.ConfigFlags) (*faclientset.Cl
 		log.Errorf("Unable to get config flags: (%s)", err.Error())
 		return nil, err
 	}
+
+	// Adjust the QPS (queries per second) and burst settings
+    config.QPS = 500
+    config.Burst = 1000
 	fogatlasClient, err := faclientset.NewForConfig(config)
 	if err != nil {
 		log.Errorf("Unable to create fa clientset: (%s)", err.Error())

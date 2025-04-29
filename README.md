@@ -90,111 +90,100 @@ Just to compare the results obtained with carbon-aware algorithm, we use `./expe
    watch kubectl get pods -o wide
    ```
 
-## Running Experiments with the New Metrics System
+## Running Experiments and Collecting Metrics
 
-The carbon-aware metrics system allows you to collect, analyze, and visualize detailed metrics about carbon intensity, energy usage, and scheduling performance. It uses real carbon intensity forecasts from `all_forecasts.json` to provide accurate environmental impact measurements.
+This project includes a benchmarking system to evaluate the carbon-aware scheduler against different algorithms and collect detailed metrics.
 
-### Experiment Setup
+### Prerequisites
 
-1. **Prerequisites**:
-   - Complete the cluster setup steps from the previous sections
-   - Ensure the carbon-aware scheduler is running
-   - Make sure the `all_forecasts.json` file is available at its default location
+1.  **Complete Basic Setup:** Follow the steps in the "Setup and Usage" section to build `kubectl-carbon`, set up the VM with Vagrant, and configure the KWOK cluster (`make kwok`).
+2.  **Carbon-Aware Algorithm:** Ensure the external carbon-aware placement algorithm server is running. You can typically start it from the `bin` directory:
+    ```bash
+    cd /path/to/carbon-aware-orchestrator/bin # Adjust path if needed
+    ./carbon-aware & # Run in the background
+    ```
+3.  **Forecast File:** Make sure the carbon intensity forecast file (e.g., `all_forecasts.json`) is available at the location expected by the `collect_metrics.py` script (default: `/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/all_forecasts.json`) or specify its path using the `--forecast-file` option when running benchmarks.
+4.  **Python Dependencies:** Ensure required Python packages (`matplotlib`, `numpy`) are installed for metrics analysis and plotting:
+    ```bash
+    pip install matplotlib numpy
+    ```
 
-2. **Running a Benchmark**:
+### Running a Benchmark Experiment
 
-   The `run_benchmark.sh` script simplifies metrics collection:
-   
+The `run_benchmark.sh` script automates the process of running an experiment, applying workloads, collecting metrics, and analyzing results.
+
+**1. Choose an Algorithm:**
+
+   The benchmark supports different scheduling approaches, controlled by the `--algorithm` flag:
+   *   `vanilla`: Uses the default Kubernetes scheduler. Workloads are applied from the `workloads-vanilla/` directory.
+   *   `heuristic`: Uses the carbon-aware scheduler with a heuristic placement algorithm. Workloads are applied from the `workloads/` directory. (Default)
+   *   `global-optimal`: Uses the carbon-aware scheduler with a global optimal placement algorithm. Workloads are applied from the `workloads/` directory.
+
+**2. Start the Benchmark:**
+
+   Navigate to the `scripts` directory and execute `run_benchmark.sh`.
+
    ```bash
-   # Basic usage with default parameters
-   ./scripts/run_benchmark.sh
-   
-   # With custom parameters
-   ./scripts/run_benchmark.sh --name my_experiment --interval 30 --duration 3600 --shrink-factor 60
-   ```
-   
-   Important parameters:
-   - `--name`: Custom name for the experiment (default: timestamp-based)
-   - `--interval`: Metrics collection frequency in seconds (default: 60)
-   - `--duration`: Total experiment duration in seconds (default: 3600)
-   - `--shrink-factor`: Time acceleration factor (default: 1)
-   - `--forecast-file`: Path to carbon forecasts (default: predefined path)
+   cd /root/carbon/scripts
 
-3. **Applying Workloads**:
+   # Example: Run with the 'heuristic' algorithm, 60x time acceleration,
+   # collecting metrics every 30 seconds.
+   ./run_benchmark.sh --name heuristic_test_60x_$(date +%Y%m%d_%H%M%S) --algorithm heuristic --shrink-factor 60 --interval 30 --call-interval 3600
 
-   There are two methods for applying workloads during your experiments:
-   
-   a) **Apply all workloads at once** with time acceleration:
-   ```bash
-   # Usage: ./scripts/applyWorkloadAll.sh [shrink_factor] [call_interval]
-   ./scripts/applyWorkloadAll.sh 60 3600
-   ```
-   This simulates 1 hour between workload applications while accelerating time by 60x.
-   
-   b) **Apply workloads hourly**:
-   ```bash
-   # Usage: ./scripts/applyWorkloadPerHour.sh [call_interval_seconds] [shrink_factor]
-   ./scripts/applyWorkloadPerHour.sh 5 3600
-   ```
-   This waits 5 real seconds between applications while simulating 1 hour per second.
-
-4. **Scheduling Gates Monitoring**:
-
-   For experiments requiring pod scheduling at specific times:
-   ```bash
-   # Run in a separate terminal or as a background process
-   ./scripts/checkSchedulingGates.sh
-   ```
-   
-   This script monitors and removes scheduling gates when the scheduled time arrives.
-
-### Analyzing Results
-
-After an experiment, results are automatically saved to the `benchmark_results` directory:
-
-1. **View Raw Data**:
-   - Check the `raw_data` subfolder for detailed CSV and JSON files of all metrics
-   - Review `benchmark.log` for experiment progress and any issues
-
-2. **View Visualizations**:
-   - The `plots` subfolder contains automatically generated graphs:
-     - Carbon intensity over time
-     - Power usage for the entire cluster
-     - CPU utilization per node
-     - Pod scheduling status
-     - Node power draw
-
-3. **Manual Analysis**:
-   ```bash
-   # Reanalyze existing data with different parameters
-   python3 ./scripts/analyze_metrics.py --data-dir ./benchmark_results/my_experiment
+   # Example: Run with the 'vanilla' algorithm for comparison
+   ./run_benchmark.sh --name vanilla_test_60x_$(date +%Y%m%d_%H%M%S) --algorithm vanilla --shrink-factor 60 --interval 30 --call-interval 3600
    ```
 
-### Example: Full Experiment Workflow
+   **Key Parameters:**
+   *   `--name NAME`: A unique name for this experiment run. Results will be saved in `benchmark_results/NAME`. (Default: Timestamp-based name like `YYYYMMDD_HHMMSS_algorithm`)
+   *   `--algorithm TYPE`: `vanilla`, `heuristic`, or `global-optimal`. (Default: `heuristic`)
+   *   `--shrink-factor N`: Accelerates simulation time. `N=60` means 1 real second = 60 simulation seconds. (Default: `1`)
+   *   `--interval SECONDS`: How often to collect metrics (real-time seconds). (Default: `60`)
+   *   `--call-interval SECONDS`: Simulated time between applying workload timeslots. (Default: `3600`, representing 1 hour)
+   *   `--output DIR`: Parent directory for results. (Default: `/root/carbon/benchmark_results`)
+   *   `--forecast-file FILE`: Path to the carbon intensity forecast JSON.
+   *   `--no-perf`: Disable detailed performance metric collection and analysis.
 
-Here's a complete example demonstrating how to run an experiment with 60x time acceleration:
+**How it Works:**
 
-```bash
-# Start carbon-aware algorithm in background
-cd bin && ./carbon-aware &
+   The `run_benchmark.sh` script performs these steps:
+   1.  Creates an experiment directory under `benchmark_results/`.
+   2.  Starts the `applyWorkloadAll.sh` script (in the background if `--no-perf` is not used) to simulate applying workloads over time according to the `--shrink-factor` and `--call-interval`. This script logs performance data to `performance.log`.
+   3.  Starts the `collect_metrics.py` script (in the background) to periodically gather data (node usage, pod status, carbon intensity, etc.) based on the `--interval`. This script saves raw data to the `raw_data/` subdirectory and logs its activity to `collection.log`.
+   4.  Waits for the workload application and metrics collection to finish (or runs indefinitely until manually stopped with Ctrl+C if duration isn't implicitly limited by workloads).
+   5.  Runs `analyze_metrics.py` to process the collected `raw_data` and generate summary `results.json` and plots in the `plots/` directory.
+   6.  If performance metrics were captured, runs `perf_metrics_analyzer.py` to analyze `performance.log` and save results to the `perf_metrics/` directory.
 
-# Start scheduling gate checker in background
-./scripts/checkSchedulingGates.sh &
+**3. Monitor Progress (Optional):**
 
-# Start metrics collection with 60x time acceleration
-./scripts/run_benchmark.sh --name carbon_experiment_60x --shrink-factor 60 --interval 30 &
+   You can monitor the experiment while it's running:
+   *   Tail the logs: `tail -f /root/carbon/benchmark_results/YOUR_EXPERIMENT_NAME/*.log`
+   *   Watch pod status: `watch kubectl get pods -o wide`
 
-# Wait for collection to start
-sleep 5
+### Understanding the Results
 
-# Apply workloads with 60x acceleration and 1-hour intervals
-./scripts/applyWorkloadAll.sh 60 3600
+After the script finishes (or is stopped), find the results in `/root/carbon/benchmark_results/YOUR_EXPERIMENT_NAME/`:
 
-# When completed, view results
-ls -la ./benchmark_results/carbon_experiment_60x/plots/
-```
+*   `experiment_config.json`: Configuration parameters used for the run.
+*   `performance.log`: Log output from the workload application script (`applyWorkloadAll.sh`).
+*   `collection.log`: Log output from the metrics collection script (`collect_metrics.py`).
+*   `metrics_analysis.log`: Log output from the final analysis script (`analyze_metrics.py`).
+*   `perf_analysis.log`: Log output from the performance analysis script (`perf_metrics_analyzer.py`).
+*   `results.json`: Summary of key metrics (total carbon, average latency, etc.).
+*   `raw_data/`: Contains detailed time-series data in CSV and JSON formats (e.g., `nodes.csv`, `pods.json`, `carbon.csv`). **This is the primary output.**
+*   `plots/`: Contains generated graphs visualizing the collected metrics (e.g., `carbon_intensity.png`, `cluster_power.png`).
+*   `perf_metrics/`: Contains performance analysis results if enabled (e.g., `performance_metrics.csv`, plots).
 
-This workflow will collect metrics showing the impact of carbon-aware scheduling on your workloads, with visualizations of carbon intensity, power usage, and scheduling efficiency over time.
+### Manual Steps and Other Scripts (Advanced)
+
+While `run_benchmark.sh` is the recommended way, you might use other scripts directly:
+
+*   `collect_metrics.py`: Run directly to collect metrics without applying workloads or performing analysis automatically. Requires manual start/stop (Ctrl+C).
+*   `applyWorkloadAll.sh`: Applies all workload files sequentially based on shrink factor and call interval.
+*   `applyWorkloadPerHour.sh`: An alternative way to apply workloads, potentially useful for different simulation scenarios.
+*   `analyze_metrics.py`: Run manually to re-analyze data from an existing `raw_data` directory.
+*   `perf_metrics_analyzer.py`: Run manually to analyze a `performance.log` file.
+*   `checkSchedulingGates.sh`: If using workloads with specific scheduling times (gates), run this script in the background to manage them. `run_benchmark.sh` does *not* automatically run this.
 
 ## License
 

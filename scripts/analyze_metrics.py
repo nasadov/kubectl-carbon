@@ -8,6 +8,7 @@ It generates plots and summary statistics to evaluate the performance of a carbo
 """
 
 import argparse
+import bisect
 import datetime
 import json
 import os
@@ -34,13 +35,25 @@ class CarbonMetricsAnalyzer:
         self.results_file = os.path.join(self.output_dir, "results.json")
         self.config_file = os.path.join(data_dir, "experiment_config.json")
         
-        # Ensure plots directory exists
+        # Ensure base plots directory exists
         os.makedirs(self.plots_dir, exist_ok=True)
+        
+        # Define plot subdirectories
+        self.carbon_plots_dir = os.path.join(self.plots_dir, "carbon")
+        self.performance_plots_dir = os.path.join(self.plots_dir, "performance")
+        self.node_plots_dir = os.path.join(self.plots_dir, "nodes")
+        self.comparison_plots_dir = os.path.join(self.plots_dir, "comparison")
+        
+        # Create plot subdirectories
+        os.makedirs(self.carbon_plots_dir, exist_ok=True)
+        os.makedirs(self.performance_plots_dir, exist_ok=True)
+        os.makedirs(self.node_plots_dir, exist_ok=True)
+        os.makedirs(self.comparison_plots_dir, exist_ok=True)
         
         # Set default configuration values
         self.config = {
             "experiment_name": os.path.basename(data_dir),
-            "shrink_factor": 1,
+            "shrink_factor": 60,  # Default: 1 real second = 1 simulation minute
             "collection_interval": 60,
         }
         
@@ -91,7 +104,25 @@ class CarbonMetricsAnalyzer:
                 
         self.start_time = self.config.get("start_time", 0)
         self.end_time = self.config.get("end_time", self.start_time + 3600)
-        self.shrink_factor = self.config.get("shrink_factor", 1)
+        self.shrink_factor = self.config.get("shrink_factor", 60)  # Default: 1 second = 1 minute
+        
+        # Color scheme for plots
+        self.colors = {
+            "carbon_rate": "#1f77b4",  # Blue
+            "power_usage": "#ff7f0e",  # Orange
+            "carbon_intensity": "#2ca02c",  # Green
+            "cumulative_carbon": "#d62728",  # Red
+            "running_pods": "#9467bd",  # Purple
+            "pending_pods": "#8c564b",  # Brown
+            "failed_pods": "#e377c2",  # Pink
+            "regions": {
+                "DE": "#1f77b4",  # Blue
+                "FR": "#2ca02c",  # Green
+                "ES": "#ff7f0e",  # Orange
+                "IT-NO": "#d62728",  # Red
+                "unknown": "#7f7f7f"  # Gray
+            }
+        }
         
     def log(self, message: str) -> None:
         """Log a message to stdout."""
@@ -136,8 +167,18 @@ class CarbonMetricsAnalyzer:
         # Calculate carbon metrics
         if "carbon_metrics" in self.metrics and self.metrics["carbon_metrics"]:
             collection_interval = self.config.get("collection_interval", 60)
-            total_carbon = sum(m["total_carbon_rate"] for m in self.metrics["carbon_metrics"]) * collection_interval
-            total_energy = sum(m["energy_consumption_kwh"] for m in self.metrics["carbon_metrics"])
+            shrink_factor = self.config.get("shrink_factor", 1) # Get shrink factor
+            simulated_interval_seconds = collection_interval * shrink_factor
+            simulated_interval_hours = simulated_interval_seconds / 3600.0
+            
+            # Calculate total carbon using simulated interval
+            total_carbon = sum(m["total_carbon_rate"] * simulated_interval_seconds 
+                             for m in self.metrics["carbon_metrics"])
+            
+            # Calculate total energy using simulated interval and power rate
+            total_energy = sum(m["total_power_watts"] / 1000.0 * simulated_interval_hours 
+                             for m in self.metrics["carbon_metrics"])
+            
             avg_carbon_intensity = sum(m["carbon_intensity"] for m in self.metrics["carbon_metrics"]) / len(self.metrics["carbon_metrics"])
             
             summary["carbon_metrics"] = {
@@ -185,16 +226,27 @@ class CarbonMetricsAnalyzer:
             self.log("Error: matplotlib is required for plotting. Install with: pip install matplotlib")
             return
             
-        # Create plots directory if it doesn't exist
-        os.makedirs(self.plots_dir, exist_ok=True)
+        # Create all plot directories (redundant check, but safe)
+        os.makedirs(self.carbon_plots_dir, exist_ok=True)
+        os.makedirs(self.performance_plots_dir, exist_ok=True)
+        os.makedirs(self.node_plots_dir, exist_ok=True)
+        os.makedirs(self.comparison_plots_dir, exist_ok=True)
         
-        # Generate different types of plots
+        # Generate different types of plots with progress logging
+        self.log("Creating carbon metrics plots...")
         self._plot_carbon_metrics(plt)
-        self._plot_performance_metrics(plt)
-        self._plot_node_utilization(plt)
-        self._plot_combined_metrics(plt)
         
-        self.log(f"Plots saved to {self.plots_dir}")
+        self.log("Creating performance metrics plots...")
+        self._plot_performance_metrics(plt)
+        
+        self.log("Creating node utilization plots...")
+        self._plot_node_utilization(plt)
+        
+        self.log("Creating comparison plots...")
+        self._plot_performance_emissions_tradeoff(plt) # This now saves to comparison_plots_dir
+        self._create_aggregated_bar_charts(plt)      # This now saves to comparison_plots_dir
+        
+        self.log(f"All plots saved to subdirectories within {self.plots_dir}")
     
     def _plot_carbon_metrics(self, plt) -> None:
         """Generate plots for carbon-related metrics."""
@@ -204,67 +256,87 @@ class CarbonMetricsAnalyzer:
             
         carbon_data = self.metrics["carbon_metrics"]
         
-        # Convert timestamps to hours from start time
-        real_timestamps = [m["timestamp"] - self.start_time for m in carbon_data]
-        sim_timestamps_hours = [(t * self.shrink_factor) / 3600 for t in real_timestamps]
+        # Convert timestamps to simulation time (applying the shrink factor)
+        # First calculate simulation elapsed time from experiment start
+        sim_elapsed_times = [(m["timestamp"] - self.start_time) * self.shrink_factor for m in carbon_data]
+        
+        # Then convert to absolute simulation datetime by adding to start time
+        sim_timestamps = [datetime.datetime.fromtimestamp(self.start_time + elapsed) 
+                         for elapsed in sim_elapsed_times]
         
         # Extract metrics
         carbon_rates = [m["total_carbon_rate"] for m in carbon_data]
         power_usage = [m["total_power_watts"] for m in carbon_data]
         carbon_intensity = [m["carbon_intensity"] for m in carbon_data]
         
+        # Common formatter for datetime x-axis
+        date_formatter = plt.matplotlib.dates.DateFormatter('%H:%M:%S')
+        
         # Plot carbon emission rate
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps_hours, carbon_rates, 'b-', label="Total Carbon Rate")
-        plt.xlabel("Simulation Time (hours)")
+        plt.plot(sim_timestamps, carbon_rates, 'b-', label="Total Carbon Rate")
+        plt.xlabel("Simulation Time")
         plt.ylabel("Carbon Emission Rate (g CO₂/s)")
         plt.title("Carbon Emission Rate Over Time")
         plt.grid(True)
+        plt.gca().xaxis.set_major_formatter(date_formatter)
+        plt.gcf().autofmt_xdate()  # Auto-rotate date labels for better readability
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "carbon_rate.png"))
+        plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_rate.png"))
         plt.close()
         
         # Plot power usage
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps_hours, power_usage, 'r-', label="Total Power Usage")
-        plt.xlabel("Simulation Time (hours)")
+        plt.plot(sim_timestamps, power_usage, 'r-', label="Total Power Usage")
+        plt.xlabel("Simulation Time")
         plt.ylabel("Power (W)")
         plt.title("Power Usage Over Time")
         plt.grid(True)
+        plt.gca().xaxis.set_major_formatter(date_formatter)
+        plt.gcf().autofmt_xdate()
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "power_usage.png"))
+        plt.savefig(os.path.join(self.carbon_plots_dir, "power_usage.png"))
         plt.close()
         
         # Plot carbon intensity
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps_hours, carbon_intensity, 'g-', label="Carbon Intensity")
-        plt.xlabel("Simulation Time (hours)")
+        plt.plot(sim_timestamps, carbon_intensity, 'g-', label="Carbon Intensity")
+        plt.xlabel("Simulation Time")
         plt.ylabel("Carbon Intensity (g CO₂/kWh)")
         plt.title("Carbon Intensity Over Time")
         plt.grid(True)
+        plt.gca().xaxis.set_major_formatter(date_formatter)
+        plt.gcf().autofmt_xdate()
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "carbon_intensity.png"))
+        plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_intensity.png"))
         plt.close()
         
-        # Calculate cumulative carbon emissions
+        # Calculate cumulative carbon emissions using simulated interval
         collection_interval = self.config.get("collection_interval", 60)
-        cumulative_carbon = np.cumsum([r * collection_interval for r in carbon_rates])
+        shrink_factor = self.config.get("shrink_factor", 1)
+        simulated_interval_seconds = collection_interval * shrink_factor
+        cumulative_carbon = np.cumsum([r * simulated_interval_seconds for r in carbon_rates])
         
         # Plot cumulative carbon emissions
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps_hours, cumulative_carbon, 'b-', label="Cumulative Carbon Emissions")
-        plt.xlabel("Simulation Time (hours)")
+        plt.plot(sim_timestamps, cumulative_carbon, 'b-', label="Cumulative Carbon Emissions (Simulated)") # Updated label
+        plt.xlabel("Simulation Time")
         plt.ylabel("Cumulative Emissions (g CO₂)")
-        plt.title("Cumulative Carbon Emissions Over Time")
+        plt.title("Cumulative Carbon Emissions Over Simulated Time") # Updated title
         plt.grid(True)
+        plt.gca().xaxis.set_major_formatter(date_formatter)
+        plt.gcf().autofmt_xdate()
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "cumulative_carbon.png"))
+        plt.savefig(os.path.join(self.carbon_plots_dir, "cumulative_carbon.png"))
         plt.close()
-    
+
+        self._plot_time_series_by_region(plt)
+        self._create_carbon_heatmap(plt)
+
     def _plot_performance_metrics(self, plt) -> None:
         """Generate plots for performance-related metrics."""
         if "performance" not in self.metrics or not self.metrics["performance"]:
@@ -293,7 +365,7 @@ class CarbonMetricsAnalyzer:
         plt.grid(True)
         plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "pod_status.png"))
+        plt.savefig(os.path.join(self.performance_plots_dir, "pod_status.png"))
         plt.close()
         
         # Plot scheduling latency if available
@@ -313,9 +385,9 @@ class CarbonMetricsAnalyzer:
             plt.grid(True)
             plt.legend()
             plt.tight_layout()
-            plt.savefig(os.path.join(self.plots_dir, "scheduling_latency.png"))
+            plt.savefig(os.path.join(self.performance_plots_dir, "scheduling_latency.png"))
             plt.close()
-    
+
     def _plot_node_utilization(self, plt) -> None:
         """Generate plots for node utilization metrics."""
         if "nodes" not in self.metrics or not self.metrics["nodes"]:
@@ -350,7 +422,7 @@ class CarbonMetricsAnalyzer:
             plt.grid(True)
             plt.legend()
             plt.tight_layout()
-            plt.savefig(os.path.join(self.plots_dir, f"cpu_utilization_{node_name}.png"))
+            plt.savefig(os.path.join(self.node_plots_dir, f"cpu_utilization_{node_name}.png"))
             plt.close()
             
             # Plot power draw
@@ -362,79 +434,277 @@ class CarbonMetricsAnalyzer:
             plt.grid(True)
             plt.legend()
             plt.tight_layout()
-            plt.savefig(os.path.join(self.plots_dir, f"power_draw_{node_name}.png"))
+            plt.savefig(os.path.join(self.node_plots_dir, f"power_draw_{node_name}.png"))
             plt.close()
             
-    def _plot_combined_metrics(self, plt) -> None:
-        """Generate combined metric plots showing correlations."""
-        if not self.metrics["carbon_metrics"] or not self.metrics["performance"]:
+    def _plot_time_series_by_region(self, plt) -> None:
+        """Generate time series plots showing metrics broken down by region."""
+        if "nodes" not in self.metrics or not self.metrics["nodes"]:
+            self.log("No node metrics data available for plotting by region")
             return
             
-        # Plot carbon vs. throughput
-        carbon_timestamps = [m["timestamp"] for m in self.metrics["carbon_metrics"]]
-        carbon_rates = [m["total_carbon_rate"] for m in self.metrics["carbon_metrics"]]
+        # Group nodes by region
+        regions = {}
+        for node in self.metrics["nodes"]:
+            region = node.get("region", "unknown")
+            if region not in regions:
+                regions[region] = []
+            regions[region].append(node)
+            
+        # Load carbon metrics for combining with region data
+        carbon_data = {}
+        if "carbon_metrics" in self.metrics and self.metrics["carbon_metrics"]:
+            carbon_data = {cm["timestamp"]: cm for cm in self.metrics["carbon_metrics"]}
+            
+        # Plot carbon intensity by region over time
+        plt.figure(figsize=(12, 7))
         
-        perf_timestamps = [m["timestamp"] for m in self.metrics["performance"]]
-        running_pods = [m["running_pods"] for m in self.metrics["performance"]]
+        # Calculate experiment duration in simulation hours
+        exp_duration_hours = (self.end_time - self.start_time) * self.shrink_factor / 3600
         
-        # Find the closest performance data point for each carbon data point
-        combined_data = []
-        for i, ts in enumerate(carbon_timestamps):
-            closest_idx = min(range(len(perf_timestamps)), key=lambda j: abs(perf_timestamps[j] - ts))
-            combined_data.append({
-                "timestamp": ts,
-                "carbon_rate": carbon_rates[i],
-                "running_pods": running_pods[closest_idx]
-            })
-        
-        # Sort by timestamp
-        combined_data.sort(key=lambda x: x["timestamp"])
-        
-        # Convert timestamps to hours
-        sim_timestamps_hours = [(m["timestamp"] - self.start_time) * self.shrink_factor / 3600 for m in combined_data]
-        
-        # Create figure with two y-axes
-        fig, ax1 = plt.subplots(figsize=(10, 6))
-        
-        # Plot carbon rate on left y-axis
-        ax1.set_xlabel("Simulation Time (hours)")
-        ax1.set_ylabel("Carbon Rate (g CO₂/s)", color="b")
-        ax1.plot(sim_timestamps_hours, [m["carbon_rate"] for m in combined_data], 'b-', label="Carbon Rate")
-        ax1.tick_params(axis="y", labelcolor="b")
-        
-        # Create second y-axis for running pods
-        ax2 = ax1.twinx()
-        ax2.set_ylabel("Running Pods", color="g")
-        ax2.plot(sim_timestamps_hours, [m["running_pods"] for m in combined_data], 'g-', label="Running Pods")
-        ax2.tick_params(axis="y", labelcolor="g")
-        
-        # Add legend
-        lines1, labels1 = ax1.get_legend_handles_labels()
-        lines2, labels2 = ax2.get_legend_handles_labels()
-        ax1.legend(lines1 + lines2, labels1 + labels2, loc="upper right")
-        
-        plt.title("Carbon Rate vs. Running Pods")
+        for region, nodes in regions.items():
+            # Extract unique timestamps for this region's nodes
+            timestamps = sorted(set(node["timestamp"] for node in nodes))
+            
+            region_carbon_intensity = []
+            region_sim_hours = []
+            
+            for ts in timestamps:
+                sim_hour = (ts - self.start_time) * self.shrink_factor / 3600
+                
+                # Default values if no specific forecast is available
+                default_intensities = {
+                    "DE": 350,
+                    "FR": 60, 
+                    "ES": 200,
+                    "IT-NO": 300,
+                    "unknown": 400
+                }
+                carbon_intensity = default_intensities.get(region, 300)
+                
+                region_carbon_intensity.append(carbon_intensity)
+                region_sim_hours.append(sim_hour)
+            
+            if region_sim_hours and region_carbon_intensity:
+                plt.plot(region_sim_hours, region_carbon_intensity, 
+                       label=f"{region} (default)", color=self.colors["regions"].get(region, "#7f7f7f"),
+                       linestyle='--')  # Use dashed lines for default values
+                
+        plt.xlabel("Simulation Time (hours)")
+        plt.ylabel("Carbon Intensity (g CO₂/kWh)")
+        plt.title("Carbon Intensity by Region Over Time")
         plt.grid(True)
+        plt.legend()
         plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "carbon_vs_pods.png"))
+        plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_intensity_by_region.png"))
         plt.close()
         
-        # Calculate the performance-carbon tradeoff
-        if len(combined_data) > 1:
-            # Performance (pods) per unit carbon
-            pods_per_carbon = [d["running_pods"] / (d["carbon_rate"] if d["carbon_rate"] > 0 else 1.0) 
-                              for d in combined_data]
+    def _create_carbon_heatmap(self, plt) -> None:
+        """Create carbon intensity heatmap by region and time."""
+        if "carbon_metrics" not in self.metrics or not self.metrics["carbon_metrics"]:
+            self.log("No carbon metrics available for creating heatmap")
+            return
             
-            plt.figure(figsize=(10, 6))
-            plt.plot(sim_timestamps_hours, pods_per_carbon, 'm-', label="Performance-Carbon Ratio")
-            plt.xlabel("Simulation Time (hours)")
-            plt.ylabel("Pods per g CO₂/s")
-            plt.title("Performance-Carbon Tradeoff Over Time")
-            plt.grid(True)
-            plt.legend()
-            plt.tight_layout()
-            plt.savefig(os.path.join(self.plots_dir, "performance_carbon_tradeoff.png"))
-            plt.close()
+        # Get regions from node data
+        if "nodes" not in self.metrics or not self.metrics["nodes"]:
+            self.log("No node metrics available for region information")
+            return
+            
+        regions = sorted(set(node.get("region", "unknown") for node in self.metrics["nodes"]))
+        if not regions:
+            self.log("No region data found for heatmap")
+            return
+            
+        # Get unique timestamps and convert to hours
+        carbon_timestamps = sorted(set(m["timestamp"] for m in self.metrics["carbon_metrics"]))
+        sim_hours = [(ts - self.start_time) * self.shrink_factor / 3600 for ts in carbon_timestamps]
+        
+        # Determine hour buckets (round to nearest hour)
+        hour_buckets = sorted(set(int(h) for h in sim_hours))
+        if not hour_buckets:
+            self.log("Not enough time data for heatmap")
+            return
+            
+        # Create matrix for heatmap [region × hour]
+        heatmap_data = np.zeros((len(regions), len(hour_buckets)))
+        
+        # For each region and hour, find the average carbon intensity
+        for i, region in enumerate(regions):
+            for j, hour in enumerate(hour_buckets):
+                # Find carbon metrics closest to this hour for this region
+                hour_metrics = []
+                for ts, sim_hour in zip(carbon_timestamps, sim_hours):
+                    if abs(int(sim_hour) - hour) < 0.5:  # Within half an hour
+                        # Get nodes in this region at this timestamp
+                        nodes_in_region = [n for n in self.metrics["nodes"] 
+                                         if n.get("region") == region and abs(n["timestamp"] - ts) < 300]
+                        
+                        if nodes_in_region:
+                            # Get carbon intensity from carbon metrics at this timestamp
+                            carbon_metric = next((cm for cm in self.metrics["carbon_metrics"] 
+                                               if abs(cm["timestamp"] - ts) < 300), None)
+                            if carbon_metric:
+                                hour_metrics.append(carbon_metric["carbon_intensity"])
+                
+                # Average carbon intensity for this region and hour
+                if hour_metrics:
+                    heatmap_data[i, j] = sum(hour_metrics) / len(hour_metrics)
+                else:
+                    # Default value if no data
+                    heatmap_data[i, j] = 0
+        
+        # Create heatmap
+        plt.figure(figsize=(12, 8))
+        
+        # Use a color map that goes from green (low carbon) to red (high carbon)
+        cmap = plt.cm.RdYlGn_r  # Red-Yellow-Green reversed
+        
+        im = plt.imshow(heatmap_data, cmap=cmap, aspect='auto')
+        plt.colorbar(im, label="Carbon Intensity (g CO₂/kWh)")
+        
+        # Add labels
+        plt.yticks(range(len(regions)), regions)
+        plt.xticks(range(len(hour_buckets)), [f"{h}h" for h in hour_buckets])
+        
+        plt.xlabel("Simulation Time (hours)")
+        plt.ylabel("Region")
+        plt.title("Carbon Intensity Heatmap by Region and Time")
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_intensity_heatmap.png"))
+        plt.close()
+        
+    def _plot_performance_emissions_tradeoff(self, plt, summary=None) -> None:
+        """Create a plot showing the trade-off between performance and emissions."""
+        if not summary:
+            summary = self.calculate_summary_statistics()
+            
+        # We need both carbon metrics and performance metrics
+        if not summary.get("carbon_metrics") or not summary.get("performance_metrics"):
+            self.log("Insufficient data for performance-emissions trade-off plot")
+            return
+            
+        # Extract key metrics
+        carbon_metrics = summary["carbon_metrics"]
+        performance_metrics = summary["performance_metrics"]
+        
+        # Check if we have the required data points
+        avg_latency = performance_metrics.get("avg_scheduling_latency_seconds")
+        if avg_latency is None:
+            self.log("Missing avg_scheduling_latency_seconds for tradeoff plot, skipping")
+            return
+            
+        total_emissions = carbon_metrics.get("total_carbon_emissions_g")
+        if total_emissions is None:
+            self.log("Missing total_carbon_emissions_g for tradeoff plot, skipping") 
+            return
+        
+        # Create scatter plot
+        plt.figure(figsize=(10, 8))
+        
+        # Main data point for this experiment
+        emissions = total_emissions
+        latency = avg_latency if avg_latency > 0 else 0.001  # Avoid zero values
+        
+        plt.scatter(latency, emissions, s=200, color='blue', label=self.experiment_name)
+        plt.annotate(self.experiment_name, 
+                   (latency, emissions), 
+                   xytext=(10, 10),
+                   textcoords='offset points',
+                   fontsize=12)
+        
+        plt.xlabel("Average Scheduling Latency (seconds)")
+        plt.ylabel("Total Carbon Emissions (g CO₂)")
+        plt.title("Performance vs. Carbon Emissions Trade-off")
+        plt.grid(True)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "performance_emissions_tradeoff.png"))
+        plt.close()
+        
+    def _create_aggregated_bar_charts(self, plt, summary=None) -> None:
+        """Create bar charts for aggregated metrics comparison with other runs."""
+        if not summary:
+            summary = self.calculate_summary_statistics()
+            
+        # Check if we have data for this experiment
+        if not summary.get("carbon_metrics") or not summary.get("performance_metrics"):
+            self.log("Insufficient data for bar charts")
+            return
+            
+        # Extract metrics with proper default values to avoid None
+        total_emissions = summary["carbon_metrics"].get("total_carbon_emissions_g")
+        if total_emissions is None:
+            self.log("Missing total_carbon_emissions_g for bar charts, skipping")
+            return
+            
+        total_energy = summary["carbon_metrics"].get("total_energy_consumption_kwh")
+        if total_energy is None:
+            self.log("Missing total_energy_consumption_kwh for bar charts, setting to 0")
+            total_energy = 0
+            
+        avg_latency = summary["performance_metrics"].get("avg_scheduling_latency_seconds") 
+        if avg_latency is None:
+            self.log("Missing avg_scheduling_latency_seconds for bar charts, setting to 0")
+            avg_latency = 0
+        
+        # Create emissions comparison bar chart
+        plt.figure(figsize=(10, 6))
+        bar_positions = range(1)
+        bars = plt.bar(bar_positions, [total_emissions], color=['blue'])
+        
+        # Add value labels on top of bars
+        for bar, value in zip(bars, [total_emissions]):
+            height = bar.get_height()
+            if height is not None:  # Ensure we have a valid height
+                plt.text(bar.get_x() + bar.get_width()/2, height + 5, 
+                       f"{value:.1f}", ha='center', va='bottom', fontsize=10)
+        
+        plt.xlabel("Experiment")
+        plt.ylabel("Total Carbon Emissions (g CO₂)")
+        plt.title("Carbon Emissions Comparison")
+        plt.xticks(bar_positions, [self.experiment_name], rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "emissions_comparison.png"))
+        plt.close()
+        
+        # Create energy consumption comparison bar chart
+        plt.figure(figsize=(10, 6))
+        bars = plt.bar(bar_positions, [total_energy], color=['blue'])
+        
+        # Add value labels on top of bars
+        for bar, value in zip(bars, [total_energy]):
+            height = bar.get_height()
+            if height is not None:  # Ensure we have a valid height
+                plt.text(bar.get_x() + bar.get_width()/2, height + 0.01, 
+                       f"{value:.3f}", ha='center', va='bottom', fontsize=10)
+        
+        plt.xlabel("Experiment")
+        plt.ylabel("Total Energy Consumption (kWh)")
+        plt.title("Energy Consumption Comparison")
+        plt.xticks(bar_positions, [self.experiment_name], rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "energy_comparison.png"))
+        plt.close()
+        
+        # Create scheduling latency comparison bar chart
+        plt.figure(figsize=(10, 6))
+        bars = plt.bar(bar_positions, [avg_latency], color=['blue'])
+        
+        # Add value labels on top of bars
+        for bar, value in zip(bars, [avg_latency]):
+            height = bar.get_height()
+            if height is not None:  # Ensure we have a valid height
+                plt.text(bar.get_x() + bar.get_width()/2, height + 0.1, 
+                       f"{value:.2f}", ha='center', va='bottom', fontsize=10)
+        
+        plt.xlabel("Experiment")
+        plt.ylabel("Average Scheduling Latency (seconds)")
+        plt.title("Scheduling Performance Comparison")
+        plt.xticks(bar_positions, [self.experiment_name], rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "latency_comparison.png"))
+        plt.close()
         
     def analyze_metrics(self) -> None:
         """Run the full analysis and generate results."""
@@ -484,7 +754,7 @@ class CarbonMetricsAnalyzer:
             print(f"Carbon per latency unit: {summary.get('performance_carbon_tradeoff', 'N/A')} g CO₂/s")
             
         print("\n" + "="*60)
-        print(f"Plots saved to: {self.plots_dir}")
+        print(f"Plots saved to subdirectories within: {self.plots_dir}")
         print("="*60 + "\n")
 
 def main():

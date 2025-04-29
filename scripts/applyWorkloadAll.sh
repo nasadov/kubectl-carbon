@@ -17,16 +17,60 @@
 # Default values
 CALL_INTERVAL=3600    # Time between processing files (in simulation seconds)
 SHRINK_FACTOR=60      # Shrink factor for kubectl carbon (-w flag)
+WORKLOADS_BASE_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware"  # Base directory for workloads
+ALGORITHM=""          # Initialize to empty string to force explicit specification
 
 # Parse command line arguments
 usage() {
-    echo "Usage: $0 [shrink_factor] [call_interval]"
+    echo "Usage: $0 [options] [shrink_factor] [call_interval]"
+    echo "Options:"
+    echo "  --algorithm TYPE        Algorithm type: vanilla, heuristic, or global-optimal (REQUIRED)"
+    echo "  --workloads-dir DIR     Custom directory for workloads (overrides algorithm-based directory)"
+    echo ""
+    echo "Positional arguments:"
     echo "  shrink_factor: Value for -w flag (default: 60, simulates 60 simulation seconds per real second)"
     echo "  call_interval: Simulation seconds between file submissions (default: 3600, simulates 1 hour)"
+    echo ""
+    echo "Default workload directories:"
+    echo "  vanilla:        ${WORKLOADS_BASE_DIR}/workloads-vanilla/"
+    echo "  heuristic:      ${WORKLOADS_BASE_DIR}/workloads/"
+    echo "  global-optimal: ${WORKLOADS_BASE_DIR}/workloads/"
     exit 1
 }
 
-# Check if arguments were provided
+# Parse named arguments first (if any)
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --algorithm)
+            if [[ "$2" == "vanilla" || "$2" == "heuristic" || "$2" == "global-optimal" ]]; then
+                ALGORITHM="$2"
+                shift 2
+            else
+                echo "Error: Invalid algorithm type. Must be one of: vanilla, heuristic, global-optimal"
+                usage
+            fi
+            ;;
+        --workloads-dir)
+            CUSTOM_WORKLOADS_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            # If it's not a named argument, break out to positional argument handling
+            break
+            ;;
+    esac
+done
+
+# Check if algorithm was specified
+if [ -z "$ALGORITHM" ]; then
+    echo "Error: --algorithm flag is required. Must specify: vanilla, heuristic, or global-optimal"
+    usage
+fi
+
+# Now handle positional arguments
 if [ $# -ge 1 ]; then
     if [[ "$1" =~ ^[0-9]+$ ]]; then
         SHRINK_FACTOR=$1
@@ -45,15 +89,37 @@ if [ $# -ge 2 ]; then
     fi
 fi
 
-if [ $# -gt 2 ]; then
-    echo "Warning: Ignoring additional parameters"
+# Set workloads directory based on algorithm type
+if [ -n "$CUSTOM_WORKLOADS_DIR" ]; then
+    # Use custom directory if specified
+    WORKLOADS_DIR="$CUSTOM_WORKLOADS_DIR"
+else
+    # Set directory based on algorithm
+    if [ "$ALGORITHM" == "vanilla" ]; then
+        WORKLOADS_DIR="${WORKLOADS_BASE_DIR}/workloads-vanilla/"
+    else
+        # Both heuristic and global-optimal use the same workloads directory
+        WORKLOADS_DIR="${WORKLOADS_BASE_DIR}/workloads/"
+    fi
 fi
 
-WORKLOADS_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware/workloads/"
+# Ensure trailing slash for consistency
+[[ "${WORKLOADS_DIR}" != */ ]] && WORKLOADS_DIR="${WORKLOADS_DIR}/"
 
-echo "Starting carbon-aware scheduler with sequential timeslot processing"
+# Determine which kubectl command to use based on algorithm
+if [ "$ALGORITHM" == "vanilla" ]; then
+    KUBECTL_CMD="kubectl"
+    echo "Starting standard Kubernetes scheduler with sequential timeslot processing"
+    echo "Algorithm type: ${ALGORITHM} (using standard kubectl)"
+else
+    KUBECTL_CMD="kubectl carbon"
+    echo "Starting carbon-aware scheduler with sequential timeslot processing"
+    echo "Algorithm type: ${ALGORITHM} (using kubectl carbon)"
+fi
+
 echo "Shrink factor: ${SHRINK_FACTOR} (1 real second = ${SHRINK_FACTOR} simulation seconds)"
 echo "Call interval: ${CALL_INTERVAL} simulation seconds (equivalent to $(echo "scale=2; ${CALL_INTERVAL}/${SHRINK_FACTOR}" | bc) real seconds)"
+echo "Using workloads from: ${WORKLOADS_DIR}"
 
 # Calculate real sleep time between calls
 REAL_SLEEP_TIME=$(echo "scale=2; ${CALL_INTERVAL}/${SHRINK_FACTOR}" | bc)
@@ -83,8 +149,14 @@ for ((i=0; i<total_files; i++)); do
     echo "===== $(date): Processing timeslot $((i+1))/$total_files ====="
     echo "Processing: $(basename "$yaml_file")"
     
-    # Submit the current file with the shrink factor
-    kubectl carbon -f "$yaml_file" -w "$SHRINK_FACTOR"
+    # Submit the current file with the appropriate command
+    if [ "$ALGORITHM" == "vanilla" ]; then
+        # For vanilla, use regular kubectl apply
+        ${KUBECTL_CMD} apply -f "$yaml_file"
+    else
+        # For carbon-aware schedulers, use kubectl carbon with shrink factor
+        ${KUBECTL_CMD} -f "$yaml_file" -w "$SHRINK_FACTOR"
+    fi
     
     echo "---"
     

@@ -28,7 +28,7 @@ class CarbonMetricsCollector:
                  duration: int = 3600,
                  namespace: str = "default",
                  shrink_factor: int = 1,
-                 forecast_file: str = "/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/all_forecasts.json"):
+                 forecast_file: str = "/root/carbon/scripts/all_forecasts.json"):
         """
         Initialize the metrics collector.
         
@@ -39,6 +39,8 @@ class CarbonMetricsCollector:
             duration: Total duration of metrics collection in seconds
             namespace: Kubernetes namespace to monitor
             shrink_factor: The time shrink factor (simulation time = real time * shrink factor)
+                           1 real second = shrink_factor simulation seconds
+                           With default of 60, 1 real second = 1 simulation minute
             forecast_file: Path to the carbon intensity forecasts file
         """
         self.output_dir = os.path.join(output_dir, experiment_name)
@@ -49,6 +51,7 @@ class CarbonMetricsCollector:
         self.shrink_factor = shrink_factor
         self.forecast_file = forecast_file
         self.start_time = None
+        self.sim_start_time = None  # Simulation time reference point
         self.metrics = {
             "nodes": [],
             "pods": [],
@@ -58,46 +61,104 @@ class CarbonMetricsCollector:
             "performance": []
         }
         
-        # Load carbon intensity forecasts
-        self.forecasts = self._load_forecasts()
-        
         # Create output directory if it doesn't exist
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Setup logging
         self.log_file = os.path.join(self.output_dir, "collection.log")
         
+        # Load carbon intensity forecasts first so we can log info about them
+        self.forecasts = self._load_forecasts()
+        self.log(f"Using forecast file: {self.forecast_file}")
+        
         # Initialize results file paths
         self.config_file = os.path.join(self.output_dir, "experiment_config.json")
         self.raw_data_dir = os.path.join(self.output_dir, "raw_data")
         os.makedirs(self.raw_data_dir, exist_ok=True)
         
+        # Create directory for region-specific metrics
+        self.region_data_dir = os.path.join(self.raw_data_dir, "regions")
+        os.makedirs(self.region_data_dir, exist_ok=True)
+        
     def _load_forecasts(self) -> Dict[str, List[Dict[str, Any]]]:
         """Load carbon intensity forecasts from file."""
         try:
+            if not os.path.exists(self.forecast_file):
+                self.log(f"ERROR: Forecast file not found: {self.forecast_file}")
+                return {}
+                
+            self.log(f"Loading forecasts from: {self.forecast_file}")
             with open(self.forecast_file, 'r') as f:
                 forecasts_data = json.load(f)
+                
+            # Log basic forecast information
+            regions = list(forecasts_data.keys())
+            self.log(f"Found forecast data for {len(regions)} regions: {', '.join(regions)}")
                 
             # Convert to a more usable format
             parsed_forecasts = {}
             for region, data in forecasts_data.items():
                 parsed_forecasts[region] = []
-                for entry in data.get('forecast', []):
+                
+                # Check if we have forecast data in the expected format
+                if not isinstance(data, dict) or 'forecast' not in data:
+                    self.log(f"WARNING: Missing 'forecast' key for region {region}")
+                    continue
+                    
+                forecast_entries = data.get('forecast', [])
+                self.log(f"Region {region}: Found {len(forecast_entries)} forecast entries")
+                
+                for entry in forecast_entries:
                     try:
                         # Convert datetime string to timestamp
-                        dt = datetime.datetime.fromisoformat(entry['datetime'].replace('Z', '+00:00'))
+                        dt_str = entry.get('datetime')
+                        if not dt_str:
+                            continue
+                            
+                        # Handle different datetime formats
+                        if 'Z' in dt_str:
+                            dt = datetime.datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+                        elif 'T' in dt_str and '+' not in dt_str and '-' in dt_str:
+                            # Add UTC timezone if missing
+                            dt = datetime.datetime.fromisoformat(dt_str + '+00:00')
+                        else:
+                            dt = datetime.datetime.fromisoformat(dt_str)
+                            
                         timestamp = dt.timestamp()
+                        
+                        carbon_intensity = entry.get('carbonIntensity')
+                        if carbon_intensity is None:
+                            continue
+                            
                         parsed_forecasts[region].append({
                             'timestamp': timestamp,
-                            'carbon_intensity': entry['carbonIntensity']
+                            'carbon_intensity': carbon_intensity
                         })
                     except (ValueError, KeyError) as e:
-                        # Skip invalid entries
+                        self.log(f"WARNING: Invalid forecast entry for region {region}: {e}")
                         continue
-                        
+                
+                # Sort entries by timestamp
+                parsed_forecasts[region].sort(key=lambda x: x['timestamp'])
+                
+                # Log the time range of forecasts
+                if parsed_forecasts[region]:
+                    first_dt = datetime.datetime.fromtimestamp(parsed_forecasts[region][0]['timestamp'])
+                    last_dt = datetime.datetime.fromtimestamp(parsed_forecasts[region][-1]['timestamp'])
+                    self.log(f"Region {region}: Forecasts from {first_dt} to {last_dt}")
+            
+            # Final validation
+            if not any(entries for entries in parsed_forecasts.values()):
+                self.log("WARNING: No valid forecast entries were found")
+            else:
+                self.log(f"Successfully loaded carbon intensity forecasts for {len(parsed_forecasts)} regions")
+                
             return parsed_forecasts
+        except json.JSONDecodeError as e:
+            self.log(f"ERROR: Failed to parse forecast file - invalid JSON: {e}")
+            return {}
         except Exception as e:
-            self.log(f"Warning: Failed to load carbon intensity forecasts: {e}")
+            self.log(f"ERROR: Failed to load carbon intensity forecasts: {e}")
             self.log("Falling back to default carbon intensity values")
             return {}
         
@@ -106,6 +167,7 @@ class CarbonMetricsCollector:
         Get carbon intensity for a region at a specific time.
         
         Uses real forecast data if available, otherwise falls back to defaults.
+        Each call returns the next forecast point in sequence, regardless of timestamp.
         """
         # Default values as fallback
         default_intensities = {
@@ -116,22 +178,51 @@ class CarbonMetricsCollector:
             "unknown": 400
         }
         
-        # If we have forecast data for this region, use it
+        # First check if we have forecast data for this region
         if region in self.forecasts and self.forecasts[region]:
-            # Convert real timestamp to simulation time
-            sim_time = self.start_time + ((timestamp - self.start_time) * self.shrink_factor)
-            
-            # Find the closest forecast entry
+            # If this is our first lookup, initialize counters
+            if not hasattr(self, '_forecast_index'):
+                self._forecast_index = {}
+                
+            # Initialize index for this region if not done yet
+            if region not in self._forecast_index:
+                self._forecast_index[region] = 0
+                
+            # Get forecast entries for this region
             forecast_entries = self.forecasts[region]
+            if not forecast_entries:
+                return default_intensities.get(region, default_intensities["unknown"])
+                
+            # Get current index and increment it
+            current_index = self._forecast_index[region]
+            self._forecast_index[region] = (current_index + 1) % len(forecast_entries)
             
-            if forecast_entries:
-                # Sort by absolute time difference to find closest match
-                closest_entry = min(forecast_entries, 
-                                   key=lambda x: abs(x['timestamp'] - sim_time))
-                                   
-                return closest_entry['carbon_intensity']
+            # Get carbon intensity from current index
+            carbon_value = forecast_entries[current_index]['carbon_intensity']
+            
+            # Log occasionally for debugging
+            if not hasattr(self, '_carbon_intensity_call_count'):
+                self._carbon_intensity_call_count = {}
+            if region not in self._carbon_intensity_call_count:
+                self._carbon_intensity_call_count[region] = 0
+            
+            self._carbon_intensity_call_count[region] += 1
+                
+            if self._carbon_intensity_call_count[region] % 10 == 1:  # Log every 10th call
+                self.log(f"Using forecast for {region}: {carbon_value} gCO₂/kWh " +
+                         f"(forecast index: {current_index}/{len(forecast_entries)})")
+            
+            return carbon_value
         
-        # Fall back to default if no forecast or error
+        # If we reached here, we're falling back to default values
+        if not hasattr(self, '_carbon_intensity_fallback_logged'):
+            self._carbon_intensity_fallback_logged = {}
+            
+        if region not in self._carbon_intensity_fallback_logged:
+            # Log the fallback once per region
+            self._carbon_intensity_fallback_logged[region] = True
+            self.log(f"WARNING: Using default carbon intensity for {region}: {default_intensities.get(region, default_intensities['unknown'])} gCO₂/kWh")
+            
         return default_intensities.get(region, default_intensities["unknown"])
         
     def log(self, message: str) -> None:
@@ -541,14 +632,17 @@ class CarbonMetricsCollector:
     def collect_metrics(self) -> None:
         """Collect metrics at regular intervals until signaled to stop."""
         self.start_time = time.time()
+        self.sim_start_time = time.time()  # Initialize simulation time reference
         self.log(f"Starting metrics collection")
         self.log(f"Collection interval: {self.collection_interval} seconds")
+        self.log(f"Shrink factor: {self.shrink_factor} (1 real second = {self.shrink_factor} simulation seconds)")
         self.log(f"Output directory: {self.output_dir}")
         
         # Save experiment configuration
         config = {
             "experiment_name": self.experiment_name,
             "start_time": self.start_time,
+            "sim_start_time": self.sim_start_time,
             "collection_interval": self.collection_interval,
             "namespace": self.namespace,
             "shrink_factor": self.shrink_factor,

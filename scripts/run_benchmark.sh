@@ -18,14 +18,18 @@
 #
 
 # Default values
-EXPERIMENT_NAME="carbon_benchmark_$(date +%Y%m%d_%H%M%S)"
+EXPERIMENT_NAME="$(date +%Y%m%d_%H%M%S)"  # Just the timestamp part
 COLLECTION_INTERVAL=60    # Collect metrics every X seconds
 NAMESPACE="default"       # Default namespace to monitor
 OUTPUT_DIR="/root/carbon/benchmark_results"
 COMPARISON_MODE=false     # Whether to run a comparison between schedulers
 SHRINK_FACTOR=1          # Default shrink factor is 1 (no time shrinking)
 FORECAST_FILE="/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/all_forecasts.json"
-# Removing the fixed EXPERIMENT_DURATION since we'll calculate it dynamically
+ALGORITHM="heuristic"    # Default algorithm: options are vanilla, heuristic, global-optimal
+CALL_INTERVAL=3600       # Default interval between workload submissions (3600 simulation seconds = 1 hour)
+# Base directories for workloads
+WORKLOADS_BASE_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware"
+CAPTURE_PERF_METRICS=true  # Whether to capture and analyze performance metrics
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -33,6 +37,84 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Function to get workload directory based on algorithm
+get_workloads_dir() {
+    local alg="$1"
+    
+    case "$alg" in
+        vanilla)
+            echo "${WORKLOADS_BASE_DIR}/workloads-vanilla/"
+            ;;
+        heuristic|global-optimal)
+            echo "${WORKLOADS_BASE_DIR}/workloads/"
+            ;;
+        *)
+            print_error "Invalid algorithm: $alg. Must be one of: vanilla, heuristic, global-optimal"
+            exit 1
+            ;;
+    esac
+}
+
+# Function to run the appropriate workload script based on algorithm
+run_workload_script() {
+    local algorithm="$1"
+    local output_dir="$2"
+    local experiment_dir="${output_dir}/${EXPERIMENT_NAME}_${algorithm}"
+    local log_file="${experiment_dir}/performance.log"
+    
+    print_message "Running with algorithm: $algorithm"
+    print_message "Logging performance metrics to: $log_file"
+    print_message "Call interval: $CALL_INTERVAL simulation seconds"
+    
+    # Make sure the directory exists
+    mkdir -p "$(dirname "$log_file")"
+    
+    # Run the workload script and capture its output
+    if [ "$CAPTURE_PERF_METRICS" = true ]; then
+        "$(dirname "$0")/applyWorkloadAll.sh" --algorithm "$algorithm" "$SHRINK_FACTOR" "$CALL_INTERVAL" 2>&1 | tee -a "$log_file"
+    else
+        "$(dirname "$0")/applyWorkloadAll.sh" --algorithm "$algorithm" "$SHRINK_FACTOR" "$CALL_INTERVAL"
+    fi
+}
+
+# Function to analyze performance metrics from log file
+analyze_perf_metrics() {
+    local experiment_dir="$1"
+    local log_file="${experiment_dir}/performance.log"
+    # Set output directory for the analyzer script to raw_data
+    local analyzer_output_dir="${experiment_dir}/raw_data"
+    # Define the target directory for plots
+    local plots_target_dir="${experiment_dir}/plots/performance"
+    
+    if [ ! -f "$log_file" ]; then
+        print_warning "Performance log file not found: $log_file"
+        return 1
+    fi
+    
+    print_message "Analyzing performance metrics from $log_file"
+    # Ensure the raw_data directory exists
+    mkdir -p "$analyzer_output_dir"
+    # Call analyzer, outputting CSV and plots to raw_data
+    python3 "$(dirname "$0")/perf_metrics_analyzer.py" \
+        --log-file "$log_file" \
+        --output-dir "$analyzer_output_dir" \
+        --output-csv "performance_metrics.csv"
+        
+    # Now, move the generated plots from raw_data to plots/performance
+    if ls "${analyzer_output_dir}"/*.png > /dev/null 2>&1; then
+        print_message "Moving performance plots to $plots_target_dir"
+        # Ensure the target plot directory exists
+        mkdir -p "$plots_target_dir"
+        # Move the PNG files
+        mv -f "${analyzer_output_dir}"/*.png "$plots_target_dir/"
+    else
+        print_warning "No performance plots (*.png) found in $analyzer_output_dir to move."
+    fi
+    
+    print_message "Performance CSV saved to $analyzer_output_dir"
+    print_message "Performance plots moved to $plots_target_dir"
+}
 
 print_header() {
     echo -e "${BLUE}==============================================${NC}"
@@ -55,14 +137,17 @@ print_error() {
 usage() {
     echo "Usage: $0 [options]"
     echo "Options:"
-    echo "  -n, --name NAME          Experiment name (default: carbon_benchmark_TIMESTAMP)"
+    echo "  -n, --name NAME          Experiment name (default: YYYYMMDD_HHMMSS_algorithm)"
     echo "  -i, --interval SECONDS   Metrics collection interval in seconds (default: 60)"
     echo "  -o, --output DIR         Output directory (default: /root/carbon/benchmark_results)"
     echo "  -s, --namespace NAME     Kubernetes namespace to monitor (default: default)"
     echo "  -f, --shrink-factor N    Time shrink factor for simulation time (default: 1)"
+    echo "  -a, --algorithm TYPE     Algorithm type: vanilla, heuristic, or global-optimal (default: heuristic)"
     echo "  -c, --compare            Run comparison between carbon and default scheduler"
     echo "  -F, --forecast FILE      Path to carbon intensity forecast file"
+    echo "  -p, --no-perf           Disable performance metrics capture and analysis"
     echo "  -h, --help               Display this help message"
+    echo "  --call-interval SECONDS  Interval between workload submissions in simulation seconds (default: 3600)"
     exit 1
 }
 
@@ -90,6 +175,10 @@ while [[ $# -gt 0 ]]; do
             SHRINK_FACTOR="$2"
             shift 2
             ;;
+        -a|--algorithm)
+            ALGORITHM="$2"
+            shift 2
+            ;;
         -c|--compare)
             COMPARISON_MODE=true
             shift
@@ -98,11 +187,19 @@ while [[ $# -gt 0 ]]; do
             FORECAST_FILE="$2"
             shift 2
             ;;
+        -p|--no-perf)
+            CAPTURE_PERF_METRICS=false
+            shift
+            ;;
         -h|--help)
             usage
             ;;
         -d|--duration)
             # Keep this option for backward compatibility but we'll ignore its value
+            shift 2
+            ;;
+        --call-interval)
+            CALL_INTERVAL="$2"
             shift 2
             ;;
         *)
@@ -150,8 +247,8 @@ if ! kubectl get nodes &> /dev/null; then
     exit 1
 fi
 
-# Make the benchmark script executable
-chmod +x $(dirname "$0")/benchmark_metrics.py
+# Make sure scripts are executable
+chmod +x $(dirname "$0")/perf_metrics_analyzer.py
 
 if $COMPARISON_MODE; then
     # Run comparison between carbon and default scheduler
@@ -163,13 +260,33 @@ if $COMPARISON_MODE; then
     
     # First run with default scheduler
     print_message "Phase 1: Running benchmark with default scheduler..."
-    python3 $(dirname "$0")/collect_metrics.py \
-        --name "${EXPERIMENT_NAME}_default" \
-        --interval "$COLLECTION_INTERVAL" \
-        --namespace "$NAMESPACE" \
-        --output-dir "$OUTPUT_DIR" \
-        --shrink-factor "$SHRINK_FACTOR" \
-        --forecast-file "$FORECAST_FILE"
+    
+    # Set up output directory for this run
+    DEFAULT_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}_default"
+    mkdir -p "$DEFAULT_DIR"
+    
+    # Start capturing performance metrics
+    if [ "$CAPTURE_PERF_METRICS" = true ]; then
+        print_message "Capturing performance metrics to ${DEFAULT_DIR}/performance.log"
+        
+        # Run the metrics collection and capture performance logs
+        python3 $(dirname "$0")/collect_metrics.py \
+            --name "${EXPERIMENT_NAME}_default" \
+            --interval "$COLLECTION_INTERVAL" \
+            --namespace "$NAMESPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --shrink-factor "$SHRINK_FACTOR" \
+            --forecast-file "$FORECAST_FILE" 2>&1 | tee -a "${DEFAULT_DIR}/performance.log"
+    else
+        # Run without capturing metrics
+        python3 $(dirname "$0")/collect_metrics.py \
+            --name "${EXPERIMENT_NAME}_default" \
+            --interval "$COLLECTION_INTERVAL" \
+            --namespace "$NAMESPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --shrink-factor "$SHRINK_FACTOR" \
+            --forecast-file "$FORECAST_FILE"
+    fi
     
     print_message "Default scheduler benchmark completed"
     
@@ -184,25 +301,54 @@ if $COMPARISON_MODE; then
     
     # Run with carbon-aware scheduler
     print_message "Phase 2: Running benchmark with carbon-aware scheduler..."
-    python3 $(dirname "$0")/collect_metrics.py \
-        --name "${EXPERIMENT_NAME}_carbon" \
-        --interval "$COLLECTION_INTERVAL" \
-        --namespace "$NAMESPACE" \
-        --output-dir "$OUTPUT_DIR" \
-        --shrink-factor "$SHRINK_FACTOR" \
-        --forecast-file "$FORECAST_FILE"
+    
+    # Set up output directory for carbon scheduler run
+    CARBON_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}_carbon"
+    mkdir -p "$CARBON_DIR"
+    
+    if [ "$CAPTURE_PERF_METRICS" = true ]; then
+        print_message "Capturing performance metrics to ${CARBON_DIR}/performance.log"
+        
+        # Run metrics collection and capture performance logs
+        python3 $(dirname "$0")/collect_metrics.py \
+            --name "${EXPERIMENT_NAME}_carbon" \
+            --interval "$COLLECTION_INTERVAL" \
+            --namespace "$NAMESPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --shrink-factor "$SHRINK_FACTOR" \
+            --forecast-file "$FORECAST_FILE" 2>&1 | tee -a "${CARBON_DIR}/performance.log"
+    else
+        # Run without capturing metrics
+        python3 $(dirname "$0")/collect_metrics.py \
+            --name "${EXPERIMENT_NAME}_carbon" \
+            --interval "$COLLECTION_INTERVAL" \
+            --namespace "$NAMESPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --shrink-factor "$SHRINK_FACTOR" \
+            --forecast-file "$FORECAST_FILE"
+    fi
     
     print_message "Carbon scheduler benchmark completed"
     
     # Generate comparison report if both runs were successful
     if [[ -d "${OUTPUT_DIR}/${EXPERIMENT_NAME}_default" && -d "${OUTPUT_DIR}/${EXPERIMENT_NAME}_carbon" ]]; then
         print_message "Generating comparison report..."
-        # In a future enhancement, add code here to generate a comparison report
-        # between the carbon and default scheduler results
+        
+        # Analyze performance metrics if enabled
+        if [ "$CAPTURE_PERF_METRICS" = true ]; then
+            print_message "Analyzing performance metrics..."
+            analyze_perf_metrics "${DEFAULT_DIR}"
+            analyze_perf_metrics "${CARBON_DIR}"
+        fi
+        
+        # Generate metrics analysis
+        print_message "Analyzing metrics data..."
+        python3 $(dirname "$0")/analyze_metrics.py --data-dir "${DEFAULT_DIR}"
+        python3 $(dirname "$0")/analyze_metrics.py --data-dir "${CARBON_DIR}"
         
         print_message "Results saved to:"
-        echo "  - ${OUTPUT_DIR}/${EXPERIMENT_NAME}_default"
-        echo "  - ${OUTPUT_DIR}/${EXPERIMENT_NAME}_carbon"
+        echo "  - ${DEFAULT_DIR}"
+        echo "  - ${CARBON_DIR}"
         print_message "To compare results, review the metrics data in these directories"
     else
         print_warning "One or both benchmark runs did not complete successfully."
@@ -218,31 +364,111 @@ else
     print_message "Shrink factor: ${SHRINK_FACTOR} (simulation time = real time × ${SHRINK_FACTOR})"
     print_message "Output directory: ${OUTPUT_DIR}"
     
-    # First collect the metrics - without a fixed duration
-    print_message "Phase 1: Collecting metrics data..."
-    python3 $(dirname "$0")/collect_metrics.py \
-        --name "$EXPERIMENT_NAME" \
-        --interval "$COLLECTION_INTERVAL" \
-        --namespace "$NAMESPACE" \
-        --output-dir "$OUTPUT_DIR" \
-        --shrink-factor "$SHRINK_FACTOR" \
-        --forecast-file "$FORECAST_FILE"
+    # Set up experiment directory
+    EXPERIMENT_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}_${ALGORITHM}"
+    mkdir -p "$EXPERIMENT_DIR"
+    
+    # Start metrics collection in the background
+    print_message "Phase 1: Starting metrics collection in the background..."
+    METRICS_LOG_FILE="${EXPERIMENT_DIR}/collection.log" # Define log file for collector
+    
+    if [ "$CAPTURE_PERF_METRICS" = true ]; then
+        print_message "Capturing performance metrics to ${EXPERIMENT_DIR}/performance.log"
+        # Start collector in background, tee output to both performance log and its own log
+        python3 "$(dirname "$0")/collect_metrics.py" \
+            --name "${EXPERIMENT_NAME}_${ALGORITHM}" \
+            --interval "$COLLECTION_INTERVAL" \
+            --namespace "$NAMESPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --shrink-factor "$SHRINK_FACTOR" \
+            --forecast-file "$FORECAST_FILE" 2>&1 | tee -a "${EXPERIMENT_DIR}/performance.log" > "$METRICS_LOG_FILE" &
+        COLLECTOR_PID=$! # Capture the PID of the background process
+    else
+        # Start collector in background, log to its own file
+        python3 "$(dirname "$0")/collect_metrics.py" \
+            --name "${EXPERIMENT_NAME}_${ALGORITHM}" \
+            --interval "$COLLECTION_INTERVAL" \
+            --namespace "$NAMESPACE" \
+            --output-dir "$OUTPUT_DIR" \
+            --shrink-factor "$SHRINK_FACTOR" \
+            --forecast-file "$FORECAST_FILE" > "$METRICS_LOG_FILE" 2>&1 &
+        COLLECTOR_PID=$! # Capture the PID of the background process
+    fi
+    
+    print_message "Metrics collector started in background (PID: $COLLECTOR_PID)"
+    
+    # Run the workload script (this will run in the foreground)
+    print_message "Phase 2: Applying workload..."
+    run_workload_script "$ALGORITHM" "$OUTPUT_DIR"
+    WORKLOAD_EXIT_CODE=$? # Capture exit code of workload script
+    
+    print_message "Workload application finished."
+
+    # Stop the metrics collector gracefully
+    print_message "Attempting graceful shutdown of metrics collector (PID: $COLLECTOR_PID) with SIGINT..."
+    if kill -SIGINT "$COLLECTOR_PID" > /dev/null 2>&1; then
+        # Wait up to 10 seconds for graceful shutdown
+        wait_time=0
+        while kill -0 "$COLLECTOR_PID" > /dev/null 2>&1 && [ $wait_time -lt 10 ]; do
+            sleep 1
+            ((wait_time++))
+        done
+
+        # Check if it stopped
+        if kill -0 "$COLLECTOR_PID" > /dev/null 2>&1; then
+            print_warning "Metrics collector (PID: $COLLECTOR_PID) did not stop after SIGINT. Sending SIGTERM..."
+            if kill -SIGTERM "$COLLECTOR_PID" > /dev/null 2>&1; then
+                # Wait up to 5 more seconds
+                wait_time=0
+                while kill -0 "$COLLECTOR_PID" > /dev/null 2>&1 && [ $wait_time -lt 5 ]; do
+                    sleep 1
+                    ((wait_time++))
+                done
+
+                if kill -0 "$COLLECTOR_PID" > /dev/null 2>&1; then
+                     print_warning "Metrics collector (PID: $COLLECTOR_PID) did not stop after SIGTERM. It might require manual intervention."
+                else
+                     print_message "Metrics collector stopped after SIGTERM."
+                fi
+            else
+                 print_warning "Failed to send SIGTERM to collector PID $COLLECTOR_PID (already stopped?)."
+            fi
+        else
+            print_message "Metrics collector stopped gracefully after SIGINT."
+        fi
+    else
+        print_warning "Failed to send SIGINT to collector PID $COLLECTOR_PID, it might have already finished or failed."
+    fi
+
+    # Check if workload script failed
+    if [ $WORKLOAD_EXIT_CODE -ne 0 ]; then
+        print_error "Workload script failed with exit code $WORKLOAD_EXIT_CODE. Aborting analysis."
+        exit $WORKLOAD_EXIT_CODE
+    fi
         
     # Then analyze the metrics and generate plots
-    print_message "Phase 2: Analyzing metrics and generating plots..."
-    python3 $(dirname "$0")/analyze_metrics.py \
-        --data-dir "${OUTPUT_DIR}/${EXPERIMENT_NAME}"
+    print_message "Phase 3: Analyzing metrics and generating plots..."
+    python3 $(dirname "$0")/analyze_metrics.py --data-dir "${EXPERIMENT_DIR}"
+    
+    # Analyze performance metrics if enabled
+    if [ "$CAPTURE_PERF_METRICS" = true ]; then
+        print_message "Phase 4: Analyzing performance metrics..."
+        analyze_perf_metrics "${EXPERIMENT_DIR}"
+    fi
     
     print_message "Benchmark completed"
-    print_message "Results saved to: ${OUTPUT_DIR}/${EXPERIMENT_NAME}"
+    print_message "Results saved to: ${EXPERIMENT_DIR}"
+    
+    # Print summary of key metrics
+    if [ -f "${EXPERIMENT_DIR}/results.json" ]; then
+        print_message "Key metrics summary:"
+        jq -r '.summary.carbon_metrics.total_carbon_emissions_g' "${EXPERIMENT_DIR}/results.json" > /dev/null 2>&1 && \
+            echo "  - Total Carbon Emissions: $(jq -r '.summary.carbon_metrics.total_carbon_emissions_g' "${EXPERIMENT_DIR}/results.json") g CO₂"
+        jq -r '.summary.performance_metrics.avg_scheduling_latency_seconds' "${EXPERIMENT_DIR}/results.json" > /dev/null 2>&1 && \
+            echo "  - Avg Scheduling Latency: $(jq -r '.summary.performance_metrics.avg_scheduling_latency_seconds' "${EXPERIMENT_DIR}/results.json") seconds"
+        
+        if [ "$CAPTURE_PERF_METRICS" = true ] && [ -f "${EXPERIMENT_DIR}/raw_data/performance_metrics.csv" ]; then
+            print_message "Performance metrics summary available at: ${EXPERIMENT_DIR}/raw_data/performance_metrics.csv"
+        fi
+    fi
 fi
-
-# Final message with instructions for analyzing results
-echo
-print_message "Analysis instructions:"
-echo "1. Review the summary in results.json"
-echo "2. Examine the time series data in the raw_data directory"
-echo "3. Check the generated plots in the plots directory (if matplotlib was available)"
-echo
-print_message "For quick insights run:"
-echo "  cat ${OUTPUT_DIR}/${EXPERIMENT_NAME}/results.json | jq"

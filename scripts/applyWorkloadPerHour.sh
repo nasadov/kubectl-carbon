@@ -17,12 +17,15 @@
 # Default values
 CALL_INTERVAL=1        # Time between processing files (in seconds)
 SHRINK_FACTOR=3600     # Shrink factor for kubectl carbon (-w flag)
+WORKLOADS_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware/workloads/"  # Default workload directory
 
 # Parse command line arguments
 usage() {
-    echo "Usage: $0 [call_interval_seconds] [shrink_factor]"
+    echo "Usage: $0 [call_interval_seconds] [shrink_factor] [workloads_dir]"
     echo "  call_interval_seconds: Time to wait between files (default: 1)"
     echo "  shrink_factor: Value for -w flag (default: 3600, simulates 1 hour per second)"
+    echo "  workloads_dir: Directory containing workload YAML files"
+    echo "                 (default: /root/carbon-aware-orchestrator/pkg/carbon-aware/workloads/)"
     exit 1
 }
 
@@ -45,15 +48,20 @@ if [ $# -ge 2 ]; then
     fi
 fi
 
-if [ $# -gt 2 ]; then
-    echo "Warning: Ignoring additional parameters"
+if [ $# -ge 3 ]; then
+    WORKLOADS_DIR="$3"
+    # Ensure trailing slash for consistency
+    [[ "${WORKLOADS_DIR}" != */ ]] && WORKLOADS_DIR="${WORKLOADS_DIR}/"
 fi
 
-WORKLOADS_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware/workloads/"
+if [ $# -gt 3 ]; then
+    echo "Warning: Ignoring additional parameters"
+fi
 
 echo "Starting carbon-aware scheduler"
 echo "Call interval: ${CALL_INTERVAL}s"
 echo "Shrink factor: ${SHRINK_FACTOR} (1 second = ${SHRINK_FACTOR} simulation seconds)"
+echo "Using workloads from: ${WORKLOADS_DIR}"
 
 # Get initial sorted list of files
 if [ ! -d "$WORKLOADS_DIR" ]; then
