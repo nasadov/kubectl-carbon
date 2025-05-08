@@ -24,7 +24,7 @@ class CarbonMetricsCollector:
     def __init__(self, 
                  output_dir: str, 
                  experiment_name: str,
-                 collection_interval: int = 60,
+                 collection_interval: int = None,  # Changed to None as default
                  duration: int = 3600,
                  namespace: str = "default",
                  shrink_factor: int = 1,
@@ -35,7 +35,7 @@ class CarbonMetricsCollector:
         Args:
             output_dir: Directory to save metrics data
             experiment_name: Name of the experiment
-            collection_interval: Time between metrics collection in seconds
+            collection_interval: Time between metrics collection in seconds (ignored - always calculated as 3600/shrink_factor)
             duration: Total duration of metrics collection in seconds
             namespace: Kubernetes namespace to monitor
             shrink_factor: The time shrink factor (simulation time = real time * shrink factor)
@@ -45,7 +45,8 @@ class CarbonMetricsCollector:
         """
         self.output_dir = os.path.join(output_dir, experiment_name)
         self.experiment_name = experiment_name
-        self.collection_interval = collection_interval
+        # Always calculate collection interval based on shrink factor
+        self.collection_interval = int(3600 / shrink_factor)
         self.duration = duration
         self.namespace = namespace
         self.shrink_factor = shrink_factor

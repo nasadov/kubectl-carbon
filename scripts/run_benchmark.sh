@@ -404,41 +404,14 @@ else
     
     print_message "Workload application finished."
 
-    # Stop the metrics collector gracefully
-    print_message "Attempting graceful shutdown of metrics collector (PID: $COLLECTOR_PID) with SIGINT..."
-    if kill -SIGINT "$COLLECTOR_PID" > /dev/null 2>&1; then
-        # Wait up to 10 seconds for graceful shutdown
-        wait_time=0
-        while kill -0 "$COLLECTOR_PID" > /dev/null 2>&1 && [ $wait_time -lt 10 ]; do
-            sleep 1
-            ((wait_time++))
-        done
-
-        # Check if it stopped
-        if kill -0 "$COLLECTOR_PID" > /dev/null 2>&1; then
-            print_warning "Metrics collector (PID: $COLLECTOR_PID) did not stop after SIGINT. Sending SIGTERM..."
-            if kill -SIGTERM "$COLLECTOR_PID" > /dev/null 2>&1; then
-                # Wait up to 5 more seconds
-                wait_time=0
-                while kill -0 "$COLLECTOR_PID" > /dev/null 2>&1 && [ $wait_time -lt 5 ]; do
-                    sleep 1
-                    ((wait_time++))
-                done
-
-                if kill -0 "$COLLECTOR_PID" > /dev/null 2>&1; then
-                     print_warning "Metrics collector (PID: $COLLECTOR_PID) did not stop after SIGTERM. It might require manual intervention."
-                else
-                     print_message "Metrics collector stopped after SIGTERM."
-                fi
-            else
-                 print_warning "Failed to send SIGTERM to collector PID $COLLECTOR_PID (already stopped?)."
-            fi
-        else
-            print_message "Metrics collector stopped gracefully after SIGINT."
-        fi
-    else
-        print_warning "Failed to send SIGINT to collector PID $COLLECTOR_PID, it might have already finished or failed."
-    fi
+    # Instead of automatically terminating the collector, inform user to press Ctrl+C when ready
+    print_message "Metrics collector is still running in the background and collecting data."
+    print_message "Press Ctrl+C when you want to stop collection and save the results."
+    
+    # Wait for the collector process to finish (will happen when user presses Ctrl+C)
+    wait $COLLECTOR_PID
+    
+    print_message "Metrics collector terminated by user. Processing results..."
 
     # Check if workload script failed
     if [ $WORKLOAD_EXIT_CODE -ne 0 ]; then
