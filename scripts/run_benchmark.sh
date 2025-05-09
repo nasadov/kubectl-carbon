@@ -29,7 +29,8 @@ ALGORITHM="heuristic"    # Default algorithm: options are vanilla, heuristic, gl
 CALL_INTERVAL=3600       # Default interval between workload submissions (3600 simulation seconds = 1 hour)
 # Base directories for workloads
 WORKLOADS_BASE_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware"
-CAPTURE_PERF_METRICS=true  # Whether to capture and analyze performance metrics
+# Always capture and analyze performance metrics
+CAPTURE_PERF_METRICS=true
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -145,7 +146,6 @@ usage() {
     echo "  -a, --algorithm TYPE     Algorithm type: vanilla, heuristic, or global-optimal (default: heuristic)"
     echo "  -c, --compare            Run comparison between carbon and default scheduler"
     echo "  -F, --forecast FILE      Path to carbon intensity forecast file"
-    echo "  -p, --no-perf           Disable performance metrics capture and analysis"
     echo "  -h, --help               Display this help message"
     echo "  --call-interval SECONDS  Interval between workload submissions in simulation seconds (default: 3600)"
     exit 1
@@ -186,10 +186,6 @@ while [[ $# -gt 0 ]]; do
         -F|--forecast)
             FORECAST_FILE="$2"
             shift 2
-            ;;
-        -p|--no-perf)
-            CAPTURE_PERF_METRICS=false
-            shift
             ;;
         -h|--help)
             usage
@@ -363,6 +359,28 @@ else
     print_message "Collection interval: ${COLLECTION_INTERVAL} seconds"
     print_message "Shrink factor: ${SHRINK_FACTOR} (simulation time = real time × ${SHRINK_FACTOR})"
     print_message "Output directory: ${OUTPUT_DIR}"
+    
+    # Automatically update KWOK timing settings to match the shrink factor
+    # This ensures pod durations are correctly scaled
+    DEFAULT_SHRINK_FACTOR=60
+    if [ "$SHRINK_FACTOR" != "$DEFAULT_SHRINK_FACTOR" ]; then
+        print_message "Detected non-default shrink factor. Updating KWOK timing settings..."
+        
+        # Check if user wants to update KWOK settings
+        read -p "Update KWOK timing settings for shrink factor ${SHRINK_FACTOR}? [Y/n] " -n 1 -r UPDATE_KWOK
+        echo # Move to a new line
+        
+        if [[ $UPDATE_KWOK =~ ^[Yy]$ ]] || [[ -z $UPDATE_KWOK ]]; then
+            # Run the script to update KWOK settings
+            "$(dirname "$0")/apply_kwok_settings.sh" --shrink-factor "$SHRINK_FACTOR" || {
+                print_error "Failed to update KWOK settings. Exiting."
+                exit 1
+            }
+        else
+            print_warning "KWOK timing settings not updated. Pod durations may not match simulation time."
+            print_warning "To update manually, run: $(dirname "$0")/apply_kwok_settings.sh --shrink-factor $SHRINK_FACTOR"
+        fi
+    fi
     
     # Set up experiment directory
     EXPERIMENT_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}_${ALGORITHM}"

@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import numpy as np
+import subprocess
 from typing import Dict, List, Any, Tuple, Optional
 
 class CarbonMetricsAnalyzer:
@@ -755,7 +756,72 @@ class CarbonMetricsAnalyzer:
             
         print("\n" + "="*60)
         print(f"Plots saved to subdirectories within: {self.plots_dir}")
+        print("Carbon metrics analysis complete. Performance metrics will be analyzed next (if enabled).")
         print("="*60 + "\n")
+
+def run_perf_metrics_analyzer(data_dir: str) -> bool:
+    """
+    Run the performance metrics analyzer on the experiment data.
+    
+    Args:
+        data_dir: Directory containing the experiment data
+        
+    Returns:
+        bool: True if analysis was successful, False otherwise
+    """
+    log_file = os.path.join(data_dir, "performance.log")
+    raw_data_dir = os.path.join(data_dir, "raw_data")
+    
+    # Check if the performance log exists
+    if not os.path.exists(log_file):
+        print(f"Performance log file not found: {log_file}")
+        return False
+        
+    print("\n" + "="*60)
+    print("Running Performance Metrics Analysis...")
+    print("="*60)
+    
+    # Ensure output directory exists
+    os.makedirs(raw_data_dir, exist_ok=True)
+    
+    # Get the path to the perf_metrics_analyzer.py script
+    analyzer_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "perf_metrics_analyzer.py")
+    
+    # Run the analyzer script
+    cmd = [
+        "python3", 
+        analyzer_script,
+        "--log-file", log_file,
+        "--output-dir", raw_data_dir,
+        "--output-csv", "performance_metrics.csv"
+    ]
+    
+    try:
+        process = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print(process.stdout)
+        
+        # Move generated plots to the performance plots directory
+        plots_dir = os.path.join(data_dir, "plots", "performance")
+        os.makedirs(plots_dir, exist_ok=True)
+        
+        # Copy any PNG files from raw_data to plots/performance
+        for root, _, files in os.walk(raw_data_dir):
+            for file in files:
+                if file.endswith(".png"):
+                    src = os.path.join(root, file)
+                    dst = os.path.join(plots_dir, file)
+                    os.replace(src, dst)
+                    
+        print(f"Performance metrics plots moved to: {plots_dir}")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        print(f"Error running performance metrics analyzer: {e}")
+        print(f"Error output: {e.stderr}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error running performance metrics analyzer: {e}")
+        return False
 
 def main():
     """Main function to run the metrics analyzer."""
@@ -764,6 +830,8 @@ def main():
                         help="Directory containing the collected metrics data")
     parser.add_argument("--output-dir", default=None,
                         help="Directory to save analysis results (defaults to data-dir if not specified)")
+    parser.add_argument("--skip-perf", action="store_true",
+                        help="Skip performance metrics analysis")
     
     args = parser.parse_args()
     
@@ -777,6 +845,10 @@ def main():
     )
     
     analyzer.analyze_metrics()
+    
+    # Run performance metrics analyzer if not skipped
+    if not args.skip_perf:
+        run_perf_metrics_analyzer(args.data_dir)
     
 if __name__ == "__main__":
     main()

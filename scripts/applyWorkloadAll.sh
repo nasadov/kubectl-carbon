@@ -168,4 +168,16 @@ for ((i=0; i<total_files; i++)); do
 done
 
 echo "===== $(date): All timeslots processed ====="
+echo "Entering extended metrics collection phase for 12 more simulation hours..."
+
+# Continue collecting metrics for 12 more simulation hours
+for ((hour=1; hour<=12; hour++)); do
+    # Sleep for one simulation hour
+    sleep $REAL_SLEEP_TIME
+
+    echo "===== $(date): Extended collection - Simulation hour $((total_files + hour)) of $((total_files + 12)) ====="
+    echo "No new workloads deployed, continuing metrics collection for running pods..."
+done
+
+echo "===== $(date): Extended metrics collection completed ====="
 echo "Experiment completed successfully"
