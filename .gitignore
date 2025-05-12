@@ -23,3 +23,17 @@ tmp
 
 # Ignore logs
 *.log
+
+# Ignore KWOK backup and generated files
+*.bak
+kwok-config-dynamic.yaml
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Generated analysis files
+plots/
+raw_data/

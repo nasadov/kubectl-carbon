@@ -502,54 +502,62 @@ class CarbonMetricsAnalyzer:
         
     def _create_carbon_heatmap(self, plt) -> None:
         """Create carbon intensity heatmap by region and time."""
-        if "carbon_metrics" not in self.metrics or not self.metrics["carbon_metrics"]:
-            self.log("No carbon metrics available for creating heatmap")
-            return
-            
-        # Get regions from node data
-        if "nodes" not in self.metrics or not self.metrics["nodes"]:
-            self.log("No node metrics available for region information")
-            return
-            
-        regions = sorted(set(node.get("region", "unknown") for node in self.metrics["nodes"]))
-        if not regions:
-            self.log("No region data found for heatmap")
-            return
-            
-        # Get unique timestamps and convert to hours
-        carbon_timestamps = sorted(set(m["timestamp"] for m in self.metrics["carbon_metrics"]))
-        sim_hours = [(ts - self.start_time) * self.shrink_factor / 3600 for ts in carbon_timestamps]
+        import json
         
-        # Determine hour buckets (round to nearest hour)
-        hour_buckets = sorted(set(int(h) for h in sim_hours))
-        if not hour_buckets:
-            self.log("Not enough time data for heatmap")
+        # Load carbon intensity data from all_forecasts.json
+        forecasts_path = "/root/carbon/scripts/all_forecasts.json"
+        try:
+            with open(forecasts_path, 'r') as f:
+                forecasts_data = json.load(f)
+        except Exception as e:
+            self.log(f"Error loading forecasts from {forecasts_path}: {e}")
+            # Fall back to local path if absolute path doesn't work
+            try:
+                local_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "all_forecasts.json")
+                with open(local_path, 'r') as f:
+                    forecasts_data = json.load(f)
+            except Exception as e2:
+                self.log(f"Error loading forecasts from fallback path: {e2}")
+                return
+            
+        # Get regions from forecasts data
+        regions = sorted(forecasts_data.keys())
+        if not regions:
+            self.log("No region data found in forecasts file")
             return
             
+        # Get all hours from the first region (assuming all regions have the same time points)
+        if not forecasts_data[regions[0]].get("forecast"):
+            self.log("Invalid forecast data structure")
+            return
+            
+        # Extract hours for x-axis - use all 25 hourly data points (0-24h) 
+        hour_buckets = list(range(0, 25))  # Every hour up to 25 hours (0-24)
+        
         # Create matrix for heatmap [region × hour]
         heatmap_data = np.zeros((len(regions), len(hour_buckets)))
         
-        # For each region and hour, find the average carbon intensity
+        # For each region and hour, get the carbon intensity
         for i, region in enumerate(regions):
+            region_forecasts = forecasts_data[region].get("forecast", [])
+            
+            # Create a direct mapping of hour index to carbon intensity
+            forecast_by_hour = {}
+            
+            # Process forecast data - simply use entry index as the hour
+            # This assumes each entry represents one consecutive hour
+            for idx, entry in enumerate(region_forecasts):
+                if "carbonIntensity" in entry:
+                    forecast_by_hour[idx] = entry["carbonIntensity"]
+            
+            # Map the forecast data to our hour buckets - direct 1:1 mapping
             for j, hour in enumerate(hour_buckets):
-                # Find carbon metrics closest to this hour for this region
-                hour_metrics = []
-                for ts, sim_hour in zip(carbon_timestamps, sim_hours):
-                    if abs(int(sim_hour) - hour) < 0.5:  # Within half an hour
-                        # Get nodes in this region at this timestamp
-                        nodes_in_region = [n for n in self.metrics["nodes"] 
-                                         if n.get("region") == region and abs(n["timestamp"] - ts) < 300]
-                        
-                        if nodes_in_region:
-                            # Get carbon intensity from carbon metrics at this timestamp
-                            carbon_metric = next((cm for cm in self.metrics["carbon_metrics"] 
-                                               if abs(cm["timestamp"] - ts) < 300), None)
-                            if carbon_metric:
-                                hour_metrics.append(carbon_metric["carbon_intensity"])
-                
-                # Average carbon intensity for this region and hour
-                if hour_metrics:
-                    heatmap_data[i, j] = sum(hour_metrics) / len(hour_metrics)
+                # Get the exact hour data when available
+                if hour in forecast_by_hour:
+                    heatmap_data[i, j] = forecast_by_hour[hour]
+                elif hour < len(region_forecasts):
+                    # Fallback: use the index directly if available
+                    heatmap_data[i, j] = region_forecasts[hour].get("carbonIntensity", 0)
                 else:
                     # Default value if no data
                     heatmap_data[i, j] = 0
@@ -560,21 +568,76 @@ class CarbonMetricsAnalyzer:
         # Use a color map that goes from green (low carbon) to red (high carbon)
         cmap = plt.cm.RdYlGn_r  # Red-Yellow-Green reversed
         
-        im = plt.imshow(heatmap_data, cmap=cmap, aspect='auto')
+        # Calculate reasonable min/max for better color contrast
+        vmin = np.percentile(heatmap_data[heatmap_data > 0], 5)  # 5th percentile
+        vmax = np.percentile(heatmap_data[heatmap_data > 0], 95)  # 95th percentile
+        
+        im = plt.imshow(heatmap_data, cmap=cmap, aspect='auto', vmin=vmin, vmax=vmax)
         plt.colorbar(im, label="Carbon Intensity (g CO₂/kWh)")
         
         # Add labels
         plt.yticks(range(len(regions)), regions)
-        plt.xticks(range(len(hour_buckets)), [f"{h}h" for h in hour_buckets])
+        
+        # For 25 hours, show tick marks every 3 hours to avoid crowding
+        if len(hour_buckets) > 20:
+            plt.xticks(range(0, len(hour_buckets), 3), [f"{hour_buckets[i]}h" for i in range(0, len(hour_buckets), 3)])
+        else:
+            # For fewer hours, we can show every second hour
+            plt.xticks(range(0, len(hour_buckets), 2), [f"{hour_buckets[i]}h" for i in range(0, len(hour_buckets), 2)])
         
         plt.xlabel("Simulation Time (hours)")
         plt.ylabel("Region")
         plt.title("Carbon Intensity Heatmap by Region and Time")
         
         plt.tight_layout()
-        plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_intensity_heatmap.png"))
+        heatmap_path = os.path.join(self.carbon_plots_dir, "carbon_intensity_heatmap.png")
+        plt.savefig(heatmap_path)
+        self.log(f"Carbon intensity heatmap saved to: {heatmap_path}")
         plt.close()
         
+    def _load_all_experiment_results(self) -> list:
+        """Load results from all experiments in the top-level benchmark_results directory."""
+        experiments = []
+        benchmark_root = os.path.dirname(self.data_dir)
+        
+        # Skip if we don't have a valid benchmark_results directory
+        if not os.path.basename(benchmark_root) == "benchmark_results":
+            self.log("Current directory is not inside benchmark_results, skipping comparison")
+            return experiments
+            
+        # List all directories in the benchmark_results folder (top-level only)
+        for exp_dir in os.listdir(benchmark_root):
+            exp_path = os.path.join(benchmark_root, exp_dir)
+            
+            # Skip if not a directory or if it's an "archive" directory
+            if not os.path.isdir(exp_path) or exp_dir == "archive":
+                continue
+                
+            # Skip directories without a results.json file
+            results_file = os.path.join(exp_path, "results.json")
+            if not os.path.exists(results_file):
+                continue
+                
+            try:
+                with open(results_file, 'r') as f:
+                    results = json.load(f)
+                    
+                # Add the experiment name and directory to the results
+                if "experiment_name" not in results:
+                    results["experiment_name"] = exp_dir
+                results["directory"] = exp_path
+                
+                # Check if this experiment has the required metrics
+                if (results.get("carbon_metrics") and results.get("performance_metrics") and
+                    "total_carbon_emissions_g" in results["carbon_metrics"] and
+                    "avg_scheduling_latency_seconds" in results["performance_metrics"]):
+                    experiments.append(results)
+            except Exception as e:
+                self.log(f"Error loading results from {exp_dir}: {e}")
+                
+        self.log(f"Loaded results from {len(experiments)} experiments for comparison")
+        return experiments
+    
     def _plot_performance_emissions_tradeoff(self, plt, summary=None) -> None:
         """Create a plot showing the trade-off between performance and emissions."""
         if not summary:
@@ -585,38 +648,51 @@ class CarbonMetricsAnalyzer:
             self.log("Insufficient data for performance-emissions trade-off plot")
             return
             
-        # Extract key metrics
-        carbon_metrics = summary["carbon_metrics"]
-        performance_metrics = summary["performance_metrics"]
-        
-        # Check if we have the required data points
-        avg_latency = performance_metrics.get("avg_scheduling_latency_seconds")
-        if avg_latency is None:
-            self.log("Missing avg_scheduling_latency_seconds for tradeoff plot, skipping")
-            return
-            
-        total_emissions = carbon_metrics.get("total_carbon_emissions_g")
-        if total_emissions is None:
-            self.log("Missing total_carbon_emissions_g for tradeoff plot, skipping") 
-            return
+        # Get results from all experiments
+        all_experiments = self._load_all_experiment_results()
         
         # Create scatter plot
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(12, 8))
         
-        # Main data point for this experiment
-        emissions = total_emissions
-        latency = avg_latency if avg_latency > 0 else 0.001  # Avoid zero values
+        # Plot all experiments
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        color_idx = 0
         
-        plt.scatter(latency, emissions, s=200, color='blue', label=self.experiment_name)
-        plt.annotate(self.experiment_name, 
-                   (latency, emissions), 
-                   xytext=(10, 10),
-                   textcoords='offset points',
-                   fontsize=12)
+        for exp in all_experiments:
+            carbon = exp["carbon_metrics"]
+            perf = exp["performance_metrics"]
+            
+            if ("total_carbon_emissions_g" in carbon and 
+                "avg_scheduling_latency_seconds" in perf and 
+                perf["avg_scheduling_latency_seconds"] is not None):
+                
+                emissions = carbon["total_carbon_emissions_g"]
+                latency = perf["avg_scheduling_latency_seconds"]
+                if latency <= 0:
+                    latency = 0.001  # Avoid zero values
+                
+                # Highlight current experiment
+                if exp["experiment_name"] == self.experiment_name:
+                    plt.scatter(latency, emissions, s=200, color='blue', 
+                              marker='*', label=exp["experiment_name"])
+                else:
+                    plt.scatter(latency, emissions, s=100, 
+                              color=colors[color_idx % len(colors)],
+                              label=exp["experiment_name"])
+                
+                # Add name label
+                plt.annotate(exp["experiment_name"].split('_')[-1], 
+                           (latency, emissions), 
+                           xytext=(5, 5),
+                           textcoords='offset points',
+                           fontsize=9)
+                           
+                color_idx += 1
         
         plt.xlabel("Average Scheduling Latency (seconds)")
         plt.ylabel("Total Carbon Emissions (g CO₂)")
-        plt.title("Performance vs. Carbon Emissions Trade-off")
+        plt.title("Performance vs. Carbon Emissions Trade-off (All Experiments)")
         plt.grid(True)
         
         plt.tight_layout()
@@ -633,22 +709,127 @@ class CarbonMetricsAnalyzer:
             self.log("Insufficient data for bar charts")
             return
             
-        # Extract metrics with proper default values to avoid None
-        total_emissions = summary["carbon_metrics"].get("total_carbon_emissions_g")
-        if total_emissions is None:
-            self.log("Missing total_carbon_emissions_g for bar charts, skipping")
+        # Get results from all experiments
+        all_experiments = self._load_all_experiment_results()
+        
+        # If no other experiments were found, revert to single-experiment display
+        if len(all_experiments) <= 1:
+            # Extract metrics with proper default values to avoid None
+            total_emissions = summary["carbon_metrics"].get("total_carbon_emissions_g")
+            if total_emissions is None:
+                self.log("Missing total_carbon_emissions_g for bar charts, skipping")
+                return
+                
+            total_energy = summary["carbon_metrics"].get("total_energy_consumption_kwh")
+            if total_energy is None:
+                self.log("Missing total_energy_consumption_kwh for bar charts, setting to 0")
+                total_energy = 0
+                
+            avg_latency = summary["performance_metrics"].get("avg_scheduling_latency_seconds") 
+            if avg_latency is None:
+                self.log("Missing avg_scheduling_latency_seconds for bar charts, setting to 0")
+                avg_latency = 0
+                
+            # Create single-experiment bar charts
+            self._create_single_experiment_bar_charts(plt, total_emissions, total_energy, avg_latency)
             return
             
-        total_energy = summary["carbon_metrics"].get("total_energy_consumption_kwh")
-        if total_energy is None:
-            self.log("Missing total_energy_consumption_kwh for bar charts, setting to 0")
-            total_energy = 0
-            
-        avg_latency = summary["performance_metrics"].get("avg_scheduling_latency_seconds") 
-        if avg_latency is None:
-            self.log("Missing avg_scheduling_latency_seconds for bar charts, setting to 0")
-            avg_latency = 0
+        # Prepare data for the multi-experiment bar charts
+        experiment_names = []
+        emissions_data = []
+        energy_data = []
+        latency_data = []
+        colors = []
         
+        # Color palette for bars
+        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', 
+                  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        
+        # Process each experiment
+        for i, exp in enumerate(all_experiments):
+            # Extract the algorithm type from the experiment name
+            exp_name = exp["experiment_name"]
+            if '_' in exp_name:
+                # Use the last part of the name (typically algorithm type)
+                short_name = exp_name.split('_')[-1]
+            else:
+                short_name = exp_name
+            experiment_names.append(short_name)
+            
+            # Get the metrics
+            carbon = exp["carbon_metrics"]
+            perf = exp["performance_metrics"]
+            
+            emissions_data.append(carbon.get("total_carbon_emissions_g", 0))
+            energy_data.append(carbon.get("total_energy_consumption_kwh", 0))
+            latency_data.append(perf.get("avg_scheduling_latency_seconds", 0) or 0)  # Convert None to 0
+            
+            # Highlight the current experiment with blue
+            if exp["experiment_name"] == self.experiment_name:
+                colors.append('#1f77b4')  # Blue for current experiment
+            else:
+                colors.append(palette[i % len(palette)])
+                
+        # Create emissions comparison bar chart
+        plt.figure(figsize=(max(10, len(experiment_names)), 6))
+        bar_positions = range(len(experiment_names))
+        bars = plt.bar(bar_positions, emissions_data, color=colors)
+        
+        # Add value labels on top of bars
+        for bar, value in zip(bars, emissions_data):
+            height = bar.get_height()
+            if height is not None and height > 0:  # Ensure we have a valid height
+                plt.text(bar.get_x() + bar.get_width()/2, height + max(emissions_data)*0.01, 
+                       f"{value:.1f}", ha='center', va='bottom', fontsize=9, rotation=45)
+        
+        plt.xlabel("Experiment")
+        plt.ylabel("Total Carbon Emissions (g CO₂)")
+        plt.title("Carbon Emissions Comparison Across Experiments")
+        plt.xticks(bar_positions, experiment_names, rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "emissions_comparison.png"))
+        plt.close()
+        
+        # Create energy consumption comparison bar chart
+        plt.figure(figsize=(max(10, len(experiment_names)), 6))
+        bars = plt.bar(bar_positions, energy_data, color=colors)
+        
+        # Add value labels on top of bars
+        for bar, value in zip(bars, energy_data):
+            height = bar.get_height()
+            if height is not None and height > 0:  # Ensure we have a valid height
+                plt.text(bar.get_x() + bar.get_width()/2, height + max(energy_data)*0.01, 
+                       f"{value:.3f}", ha='center', va='bottom', fontsize=9, rotation=45)
+        
+        plt.xlabel("Experiment")
+        plt.ylabel("Total Energy Consumption (kWh)")
+        plt.title("Energy Consumption Comparison Across Experiments")
+        plt.xticks(bar_positions, experiment_names, rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "energy_comparison.png"))
+        plt.close()
+        
+        # Create scheduling latency comparison bar chart
+        plt.figure(figsize=(max(10, len(experiment_names)), 6))
+        bars = plt.bar(bar_positions, latency_data, color=colors)
+        
+        # Add value labels on top of bars
+        for bar, value in zip(bars, latency_data):
+            height = bar.get_height()
+            if height is not None and height > 0:  # Ensure we have a valid height
+                plt.text(bar.get_x() + bar.get_width()/2, height + max(latency_data)*0.01, 
+                       f"{value:.2f}", ha='center', va='bottom', fontsize=9, rotation=45)
+        
+        plt.xlabel("Experiment")
+        plt.ylabel("Average Scheduling Latency (seconds)")
+        plt.title("Scheduling Performance Comparison Across Experiments")
+        plt.xticks(bar_positions, experiment_names, rotation=45, ha="right")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.comparison_plots_dir, "latency_comparison.png"))
+        plt.close()
+        
+    def _create_single_experiment_bar_charts(self, plt, total_emissions, total_energy, avg_latency):
+        """Create bar charts for a single experiment."""
         # Create emissions comparison bar chart
         plt.figure(figsize=(10, 6))
         bar_positions = range(1)

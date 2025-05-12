@@ -2,9 +2,9 @@
 
 ## Introduction
 
-**kubectl-carbon** is a `kubectl` plugin able to trigger a carbon-aware scheduling of a bunch of deployments in a k8s cluster.  **kubectl-carbon** works in combination with:
+`kubectl-carbon` is a `kubectl` plugin that helps schedule deployments in a Kubernetes cluster with carbon awareness. It works together with:
 * an external [carbon-aware placement algorithm](https://github.com/nasadov/carbon-aware-orchestrator) that provides placement info for each Pod.
-* a couple of k8s scheduler plugins at the extension points `PreEnqueue` and `Score` that exploit the placement info provided (see [here](https://gitlab.fbk.eu/fogatlas-k8s/scheduler-plugins)).
+* k8s scheduler plugins at the extension points `PreEnqueue` and `Score` that use the placement info (see [here](https://gitlab.fbk.eu/fogatlas-k8s/scheduler-plugins)).
 
 More documentation can be found [here](./docs/Proposal.pdf)
 
@@ -98,7 +98,7 @@ Just to compare the results obtained with carbon-aware algorithm, we use `./expe
 
 ## Running Experiments and Collecting Metrics
 
-This project includes a benchmarking system to evaluate the carbon-aware scheduler against different algorithms and collect detailed metrics.
+This project includes tools to help evaluate the carbon-aware scheduler against different algorithms and collect metrics.
 
 ### Prerequisites
 
