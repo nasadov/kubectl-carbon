@@ -228,11 +228,37 @@ After the script finishes (or is stopped), find the results in `/root/carbon/ben
     *   `plots/performance/`: Performance-related plots (e.g., `scheduling_latency.png`, `combined_performance.png`)
     *   `plots/comparison/`: Comparison plots if applicable
 
+### Vanilla Placement CSV Generation
+
+In addition to the experiment-specific data in the `raw_data/` directory, the system generates vanilla placement CSV files for comparison purposes in the CAO framework (server-side without considering the kwok cluster). These files contain scheduling decisions made by the default Kubernetes scheduler and are saved to:
+
+```
+/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/experiments/vanilla_placement_session.csv
+```
+
+The vanilla placement CSV contains the following columns:
+- `pod_id`: Unique identifier for each pod
+- `node_id`: ID of the node where the pod was scheduled
+- `start_slot`: Time slot when the pod started
+- `duration`: How long the pod ran
+- `cpu_request`: CPU resources requested by the pod
+- `ram_request`: Memory resources requested by the pod
+
+**Retroactive CSV Generation:**
+You can generate vanilla placement CSV files from existing experiment data using:
+
+```bash
+cd /root/carbon/scripts
+python3 collect_metrics.py --generate-csv-only /path/to/experiment/raw_data/
+```
+
+This is useful for analyzing historical experiment data or generating comparison CSVs from previously collected benchmark results.
+
 ### Manual Steps and Other Scripts (Advanced)
 
 While `run_benchmark.sh` is the recommended way, you might use other scripts directly:
 
-*   `collect_metrics.py`: Run directly to collect metrics without applying workloads or performing analysis automatically. Requires manual start/stop (Ctrl+C).
+*   `collect_metrics.py`: Run directly to collect metrics without applying workloads or performing analysis automatically. Requires manual start/stop (Ctrl+C). Also supports `--generate-csv-only` flag for retroactive CSV generation from existing raw data.
 *   `applyWorkloadAll.sh`: Applies all workload files sequentially based on shrink factor and call interval. After all workloads are deployed, it continues for 12 additional simulation hours to collect metrics on running pods.
 *   `applyWorkloadPerHour.sh`: An alternative way to apply workloads, potentially useful for different simulation scenarios.
 *   `analyze_metrics.py`: Run manually to re-analyze data from an existing `raw_data` directory. This script now automatically triggers performance metrics analysis as well.

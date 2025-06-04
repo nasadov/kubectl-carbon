@@ -18,8 +18,38 @@ import numpy as np
 import subprocess
 from typing import Dict, List, Any, Tuple, Optional
 
+# Apply NumPy compatibility patch first to ensure np.Inf is available
+try:
+    from numpy_compat_patch import apply_numpy_compatibility_patch
+    apply_numpy_compatibility_patch()
+    print("NumPy compatibility patch applied successfully")
+except ImportError:
+    # If the patch module is not found, use direct patching
+    if not hasattr(np, 'Inf'):
+        np.__dict__['Inf'] = np.inf
+        print("Applied basic NumPy compatibility patch for np.Inf")
+
 class CarbonMetricsAnalyzer:
     """Analyzes and visualizes metrics from carbon-aware scheduler experiments."""
+    
+    def _convert_to_simulation_hours(self, timestamps, start_time=None):
+        """Convert timestamps to simulation hours using the shrink factor.
+        
+        In a time-accelerated simulation, 1 real second = shrink_factor simulation seconds.
+        For example, with shrink_factor=3600, 1 real second = 1 simulation hour.
+        
+        This function converts real timestamps to simulation hour values,
+        where 0 is the simulation start time.
+        """
+        # If no start_time provided, use the experiment start time
+        # This ensures consistent time scale across ALL plots
+        if start_time is None:
+            start_time = self.start_time
+        
+        # Convert elapsed real time to simulation hours
+        # Formula: simulation_hours = real_seconds * shrink_factor / 3600
+        # This shows how many simulation hours have passed since the start
+        return [(t - start_time) / 3600 * self.shrink_factor for t in timestamps]
     
     def __init__(self, data_dir: str, output_dir: str = None):
         """
@@ -246,6 +276,7 @@ class CarbonMetricsAnalyzer:
         self.log("Creating comparison plots...")
         self._plot_performance_emissions_tradeoff(plt) # This now saves to comparison_plots_dir
         self._create_aggregated_bar_charts(plt)      # This now saves to comparison_plots_dir
+        self._create_algorithm_comparison_charts(plt) # This now saves to comparison_plots_dir
         
         self.log(f"All plots saved to subdirectories within {self.plots_dir}")
     
@@ -257,31 +288,23 @@ class CarbonMetricsAnalyzer:
             
         carbon_data = self.metrics["carbon_metrics"]
         
-        # Convert timestamps to simulation time (applying the shrink factor)
-        # First calculate simulation elapsed time from experiment start
-        sim_elapsed_times = [(m["timestamp"] - self.start_time) * self.shrink_factor for m in carbon_data]
-        
-        # Then convert to absolute simulation datetime by adding to start time
-        sim_timestamps = [datetime.datetime.fromtimestamp(self.start_time + elapsed) 
-                         for elapsed in sim_elapsed_times]
+        # Convert timestamps to simulation hours from start time using our helper method
+        # This ensures consistent time scale across all plots
+        timestamps = [m["timestamp"] for m in carbon_data]
+        sim_timestamps_hours = self._convert_to_simulation_hours(timestamps)
         
         # Extract metrics
         carbon_rates = [m["total_carbon_rate"] for m in carbon_data]
         power_usage = [m["total_power_watts"] for m in carbon_data]
         carbon_intensity = [m["carbon_intensity"] for m in carbon_data]
         
-        # Common formatter for datetime x-axis
-        date_formatter = plt.matplotlib.dates.DateFormatter('%H:%M:%S')
-        
         # Plot carbon emission rate
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps, carbon_rates, 'b-', label="Total Carbon Rate")
-        plt.xlabel("Simulation Time")
+        plt.plot(sim_timestamps_hours, carbon_rates, 'b-', label="Total Carbon Rate")
+        plt.xlabel("Simulation Time (hours)")
         plt.ylabel("Carbon Emission Rate (g CO₂/s)")
         plt.title("Carbon Emission Rate Over Time")
         plt.grid(True)
-        plt.gca().xaxis.set_major_formatter(date_formatter)
-        plt.gcf().autofmt_xdate()  # Auto-rotate date labels for better readability
         plt.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_rate.png"))
@@ -289,13 +312,11 @@ class CarbonMetricsAnalyzer:
         
         # Plot power usage
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps, power_usage, 'r-', label="Total Power Usage")
-        plt.xlabel("Simulation Time")
+        plt.plot(sim_timestamps_hours, power_usage, 'r-', label="Total Power Usage")
+        plt.xlabel("Simulation Time (hours)")
         plt.ylabel("Power (W)")
         plt.title("Power Usage Over Time")
         plt.grid(True)
-        plt.gca().xaxis.set_major_formatter(date_formatter)
-        plt.gcf().autofmt_xdate()
         plt.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.carbon_plots_dir, "power_usage.png"))
@@ -303,13 +324,11 @@ class CarbonMetricsAnalyzer:
         
         # Plot carbon intensity
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps, carbon_intensity, 'g-', label="Carbon Intensity")
-        plt.xlabel("Simulation Time")
+        plt.plot(sim_timestamps_hours, carbon_intensity, 'g-', label="Carbon Intensity")
+        plt.xlabel("Simulation Time (hours)")
         plt.ylabel("Carbon Intensity (g CO₂/kWh)")
         plt.title("Carbon Intensity Over Time")
         plt.grid(True)
-        plt.gca().xaxis.set_major_formatter(date_formatter)
-        plt.gcf().autofmt_xdate()
         plt.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.carbon_plots_dir, "carbon_intensity.png"))
@@ -323,13 +342,11 @@ class CarbonMetricsAnalyzer:
         
         # Plot cumulative carbon emissions
         plt.figure(figsize=(10, 6))
-        plt.plot(sim_timestamps, cumulative_carbon, 'b-', label="Cumulative Carbon Emissions (Simulated)") # Updated label
-        plt.xlabel("Simulation Time")
+        plt.plot(sim_timestamps_hours, cumulative_carbon, 'b-', label="Cumulative Carbon Emissions (Simulated)")
+        plt.xlabel("Simulation Time (hours)")
         plt.ylabel("Cumulative Emissions (g CO₂)")
-        plt.title("Cumulative Carbon Emissions Over Simulated Time") # Updated title
+        plt.title("Cumulative Carbon Emissions Over Simulated Time")
         plt.grid(True)
-        plt.gca().xaxis.set_major_formatter(date_formatter)
-        plt.gcf().autofmt_xdate()
         plt.legend()
         plt.tight_layout()
         plt.savefig(os.path.join(self.carbon_plots_dir, "cumulative_carbon.png"))
@@ -346,9 +363,10 @@ class CarbonMetricsAnalyzer:
             
         performance_data = self.metrics["performance"]
         
-        # Convert timestamps to hours from start time
-        real_timestamps = [m["timestamp"] - self.start_time for m in performance_data]
-        sim_timestamps_hours = [(t * self.shrink_factor) / 3600 for t in real_timestamps]
+        # Convert timestamps to simulation hours using our helper method
+        # This ensures consistent time scale across all plots
+        timestamps = [m["timestamp"] for m in performance_data]
+        sim_timestamps_hours = self._convert_to_simulation_hours(timestamps)
         
         # Extract metrics
         running_pods = [m["running_pods"] for m in performance_data]
@@ -398,6 +416,13 @@ class CarbonMetricsAnalyzer:
         # Group nodes by name
         node_names = set(node["node_name"] for node in self.metrics["nodes"])
         
+        # For debugging, log the first timestamp and simulation hour mapping
+        if self.metrics["nodes"]:
+            first_ts = self.metrics["nodes"][0]["timestamp"]
+            first_sim_hour = self._convert_to_simulation_hours([first_ts])[0]
+            self.log(f"DEBUG: First timestamp {first_ts} converts to simulation hour {first_sim_hour}")
+            self.log(f"DEBUG: Using shrink factor {self.shrink_factor} for time scale conversion")
+        
         for node_name in sorted(node_names):
             node_data = [n for n in self.metrics["nodes"] if n["node_name"] == node_name]
             if not node_data:
@@ -406,9 +431,10 @@ class CarbonMetricsAnalyzer:
             # Sort by timestamp
             node_data.sort(key=lambda x: x["timestamp"])
             
-            # Convert timestamps to hours from start time
-            real_timestamps = [m["timestamp"] - self.start_time for m in node_data]
-            sim_timestamps_hours = [(t * self.shrink_factor) / 3600 for t in real_timestamps]
+            # Extract raw timestamps and use our dedicated function to convert to simulation hours
+            # Always use experiment start_time for consistent time scale across all plots
+            timestamps = [m["timestamp"] for m in node_data]
+            sim_timestamps_hours = self._convert_to_simulation_hours(timestamps)
             
             # Extract metrics
             cpu_utilization = [n["cpu_utilization"] for n in node_data]
@@ -461,17 +487,16 @@ class CarbonMetricsAnalyzer:
         plt.figure(figsize=(12, 7))
         
         # Calculate experiment duration in simulation hours
-        exp_duration_hours = (self.end_time - self.start_time) * self.shrink_factor / 3600
+        exp_duration_hours = (self.end_time - self.start_time) / 3600 * self.shrink_factor
         
         for region, nodes in regions.items():
             # Extract unique timestamps for this region's nodes
             timestamps = sorted(set(node["timestamp"] for node in nodes))
             
             region_carbon_intensity = []
-            region_sim_hours = []
+            region_sim_hours = self._convert_to_simulation_hours(timestamps)
             
-            for ts in timestamps:
-                sim_hour = (ts - self.start_time) * self.shrink_factor / 3600
+            for i, ts in enumerate(timestamps):
                 
                 # Default values if no specific forecast is available
                 default_intensities = {
@@ -484,7 +509,6 @@ class CarbonMetricsAnalyzer:
                 carbon_intensity = default_intensities.get(region, 300)
                 
                 region_carbon_intensity.append(carbon_intensity)
-                region_sim_hours.append(sim_hour)
             
             if region_sim_hours and region_carbon_intensity:
                 plt.plot(region_sim_hours, region_carbon_intensity, 
@@ -534,32 +558,50 @@ class CarbonMetricsAnalyzer:
         # Extract hours for x-axis - use all 25 hourly data points (0-24h) 
         hour_buckets = list(range(0, 25))  # Every hour up to 25 hours (0-24)
         
+        # Handle NumPy compatibility - using inf_value from numpy
+        # This ensures consistent values regardless of NumPy version
+        inf_value = np.inf
+        
+        # Ensure np.Inf is available (it's handled by our patch at the top of the file)
+        if not hasattr(np, 'Inf'):
+            np.__dict__['Inf'] = np.inf
+        
         # Create matrix for heatmap [region × hour]
         heatmap_data = np.zeros((len(regions), len(hour_buckets)))
         
         # For each region and hour, get the carbon intensity
         for i, region in enumerate(regions):
-            region_forecasts = forecasts_data[region].get("forecast", [])
+            # Get the region's forecast data
+            region_data = forecasts_data.get(region, {})
+            region_forecasts = region_data.get("forecast", [])
             
             # Create a direct mapping of hour index to carbon intensity
             forecast_by_hour = {}
             
             # Process forecast data - simply use entry index as the hour
             # This assumes each entry represents one consecutive hour
-            for idx, entry in enumerate(region_forecasts):
-                if "carbonIntensity" in entry:
-                    forecast_by_hour[idx] = entry["carbonIntensity"]
+            if region_forecasts:
+                for idx, entry in enumerate(region_forecasts):
+                    if "carbonIntensity" in entry:
+                        forecast_by_hour[idx] = entry["carbonIntensity"]
             
             # Map the forecast data to our hour buckets - direct 1:1 mapping
             for j, hour in enumerate(hour_buckets):
                 # Get the exact hour data when available
                 if hour in forecast_by_hour:
                     heatmap_data[i, j] = forecast_by_hour[hour]
-                elif hour < len(region_forecasts):
+                elif region_forecasts and hour < len(region_forecasts):
                     # Fallback: use the index directly if available
                     heatmap_data[i, j] = region_forecasts[hour].get("carbonIntensity", 0)
                 else:
-                    # Default value if no data
+                    # Default values when no forecast is available
+                    default_values = {
+                        "DE": 350,
+                        "FR": 60,
+                        "ES": 200,
+                        "IT-NO": 300
+                    }
+                    heatmap_data[i, j] = default_values.get(region, 300)
                     heatmap_data[i, j] = 0
         
         # Create heatmap
@@ -681,8 +723,8 @@ class CarbonMetricsAnalyzer:
                               color=colors[color_idx % len(colors)],
                               label=exp["experiment_name"])
                 
-                # Add name label
-                plt.annotate(exp["experiment_name"].split('_')[-1], 
+                # Add name label - use full experiment name
+                plt.annotate(exp["experiment_name"], 
                            (latency, emissions), 
                            xytext=(5, 5),
                            textcoords='offset points',
@@ -747,14 +789,9 @@ class CarbonMetricsAnalyzer:
         
         # Process each experiment
         for i, exp in enumerate(all_experiments):
-            # Extract the algorithm type from the experiment name
+            # Use the full experiment name rather than just the algorithm type
             exp_name = exp["experiment_name"]
-            if '_' in exp_name:
-                # Use the last part of the name (typically algorithm type)
-                short_name = exp_name.split('_')[-1]
-            else:
-                short_name = exp_name
-            experiment_names.append(short_name)
+            experiment_names.append(exp_name)
             
             # Get the metrics
             carbon = exp["carbon_metrics"]
@@ -886,6 +923,282 @@ class CarbonMetricsAnalyzer:
         plt.xticks(bar_positions, [self.experiment_name], rotation=45, ha="right")
         plt.tight_layout()
         plt.savefig(os.path.join(self.comparison_plots_dir, "latency_comparison.png"))
+        plt.close()
+        
+    def _create_algorithm_comparison_charts(self, plt, summary=None) -> None:
+        """Create publication-quality charts comparing results by algorithm type."""
+        if not summary:
+            summary = self.calculate_summary_statistics()
+            
+        # Get results from all experiments
+        all_experiments = self._load_all_experiment_results()
+        
+        if len(all_experiments) <= 1:
+            self.log("Insufficient experiments for algorithm comparison charts")
+            return
+            
+        # Import required libraries for publication-quality plots
+        import numpy as np
+        import scipy.stats as stats
+        
+        try:
+            import seaborn as sns
+            sns.set_style("whitegrid")
+            sns.set_context("paper", font_scale=1.3)
+            use_seaborn = True
+        except ImportError:
+            use_seaborn = False
+            self.log("Seaborn not available. Falling back to matplotlib defaults.")
+            
+        # Group experiments by algorithm type
+        algorithm_groups = {
+            'vanilla': {'experiments': [], 'emissions': [], 'energy': [], 'latency': []},
+            'heuristic': {'experiments': [], 'emissions': [], 'energy': [], 'latency': []},
+            'global-optimal': {'experiments': [], 'emissions': [], 'energy': [], 'latency': []}
+        }
+        
+        # Process each experiment and classify by algorithm type
+        for exp in all_experiments:
+            name = exp["experiment_name"]
+            carbon = exp["carbon_metrics"] 
+            perf = exp["performance_metrics"]
+            
+            # Identify algorithm type from experiment name
+            algorithm_type = None
+            if 'vanilla' in name:
+                algorithm_type = 'vanilla'
+            elif 'heuristic' in name:
+                algorithm_type = 'heuristic'
+            elif 'global-optimal' in name:
+                algorithm_type = 'global-optimal'
+            else:
+                continue  # Skip experiments we can't classify
+                
+            # Collect metrics
+            emissions = carbon.get("total_carbon_emissions_g", 0)
+            energy = carbon.get("total_energy_consumption_kwh", 0)
+            latency = perf.get("avg_scheduling_latency_seconds", 0) or 0  # Convert None to 0
+            
+            algorithm_groups[algorithm_type]['experiments'].append(name)
+            algorithm_groups[algorithm_type]['emissions'].append(emissions)
+            algorithm_groups[algorithm_type]['energy'].append(energy)  
+            algorithm_groups[algorithm_type]['latency'].append(latency)
+        
+        # Calculate averages and confidence intervals for each group
+        algorithm_types = []
+        avg_emissions = []  
+        avg_energy = []
+        avg_latency = []
+        ci_emissions = []
+        ci_energy = []
+        ci_latency = []
+        sample_sizes = []
+        
+        confidence_level = 0.95  # 95% confidence interval
+        
+        for alg_type, data in algorithm_groups.items():
+            if not data['experiments']:
+                continue  # Skip empty groups
+                
+            algorithm_types.append(alg_type)
+            sample_size = len(data['experiments'])
+            sample_sizes.append(sample_size)
+            
+            # Calculate averages
+            avg_emissions.append(np.mean(data['emissions']))
+            avg_energy.append(np.mean(data['energy']))
+            avg_latency.append(np.mean(data['latency']))
+            
+            # Calculate confidence intervals
+            # For small samples (n<30), we use t-distribution
+            if sample_size > 1:
+                # For emissions
+                sem_emissions = stats.sem(data['emissions'])
+                ci_emissions.append(sem_emissions * stats.t.ppf((1 + confidence_level) / 2, sample_size-1))
+                
+                # For energy
+                sem_energy = stats.sem(data['energy'])
+                ci_energy.append(sem_energy * stats.t.ppf((1 + confidence_level) / 2, sample_size-1))
+                
+                # For latency
+                sem_latency = stats.sem(data['latency'])
+                ci_latency.append(sem_latency * stats.t.ppf((1 + confidence_level) / 2, sample_size-1))
+            else:
+                # No CI possible with single sample
+                ci_emissions.append(0)
+                ci_energy.append(0)
+                ci_latency.append(0)
+            
+        # If we don't have at least two algorithm types, we can't create a comparison
+        if len(algorithm_types) < 2:
+            self.log("Insufficient algorithm types for comparison charts")
+            return
+            
+        # Color mapping using a color-blind friendly palette
+        colors = {
+            'vanilla': '#0173B2',      # Blue 
+            'heuristic': '#029E73',    # Green
+            'global-optimal': '#D55E00' # Orange/Red
+        }
+        
+        # Set publication-quality figure parameters
+        plt.rcParams.update({
+            'font.family': 'Times New Roman',  # Standard journal font
+            'font.size': 12,
+            'axes.labelsize': 14,
+            'axes.titlesize': 16,
+            'xtick.labelsize': 12,
+            'ytick.labelsize': 12,
+            'legend.fontsize': 12,
+            'figure.titlesize': 18,
+            'figure.dpi': 600,               # Higher DPI for print quality
+            'axes.linewidth': 1.2,           # Slightly thicker axis lines
+            'axes.grid': True,               # Show grid
+            'grid.linestyle': '--',          # Dashed grid lines
+            'grid.alpha': 0.3                # Subtle grid
+        })
+        
+        # Create subplots for the three metrics side by side
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
+        
+        # Common plotting parameters
+        bar_colors = [colors.get(alg, '#999999') for alg in algorithm_types]
+        x_pos = np.arange(len(algorithm_types))
+        bar_width = 0.7
+        edgecolor = '#333333'
+        hatch_patterns = ['', '///', 'xxx']  # Distinct patterns for black and white printing
+        
+        # 1. Plot carbon emissions
+        ax1 = axes[0]
+        bars1 = ax1.bar(x_pos, avg_emissions, width=bar_width, yerr=ci_emissions, capsize=8,
+                      color=bar_colors, edgecolor=edgecolor, linewidth=1.5, alpha=0.9)
+        
+        # Add hatching patterns for better distinction in black and white printing
+        for i, bar in enumerate(bars1):
+            bar.set_hatch(hatch_patterns[i % len(hatch_patterns)])
+            
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels([t.capitalize() for t in algorithm_types], fontweight='bold')
+        ax1.set_title('Carbon Emissions', fontweight='bold')
+        ax1.set_ylabel('Carbon Emissions (g CO₂)', fontweight='bold')
+        ax1.spines['top'].set_visible(False)
+        ax1.spines['right'].set_visible(False)
+        ax1.grid(axis='y', linestyle='--', alpha=0.3)
+        
+        # Add minor ticks for more precise reading
+        ax1.minorticks_on()
+        
+        # Set y limit to start slightly below zero for better visualization
+        ymin = min(0, min(avg_emissions) - max(ci_emissions) - 0.05 * max(avg_emissions))
+        ymax = max(avg_emissions) + max(ci_emissions) + 0.15 * max(avg_emissions)
+        ax1.set_ylim(ymin, ymax)
+        
+        # Add sample size and value labels
+        for i, (bar, value, n) in enumerate(zip(bars1, avg_emissions, sample_sizes)):
+            height = bar.get_height()
+            ax1.annotate(f'{value:.1f}\n(n={n})',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 5),  # 5 points vertical offset
+                        textcoords="offset points",
+                        ha='center', va='bottom',
+                        fontweight='bold')
+        
+        # 2. Plot energy consumption
+        ax2 = axes[1]
+        bars2 = ax2.bar(x_pos, avg_energy, width=bar_width, yerr=ci_energy, capsize=8,
+                      color=bar_colors, edgecolor=edgecolor, linewidth=1.5, alpha=0.9)
+                      
+        # Add hatching patterns
+        for i, bar in enumerate(bars2):
+            bar.set_hatch(hatch_patterns[i % len(hatch_patterns)])
+            
+        ax2.set_xticks(x_pos)
+        ax2.set_xticklabels([t.capitalize() for t in algorithm_types], fontweight='bold')
+        ax2.set_title('Energy Consumption', fontweight='bold')
+        ax2.set_ylabel('Energy Consumption (kWh)', fontweight='bold')
+        ax2.spines['top'].set_visible(False)
+        ax2.spines['right'].set_visible(False)
+        ax2.grid(axis='y', linestyle='--', alpha=0.3)
+        
+        # Add minor ticks for more precise reading
+        ax2.minorticks_on()
+        
+        # Set y limit to start slightly below zero for better visualization
+        ymin = min(0, min(avg_energy) - max(ci_energy) - 0.05 * max(avg_energy))
+        ymax = max(avg_energy) + max(ci_energy) + 0.15 * max(avg_energy)
+        ax2.set_ylim(ymin, ymax)
+        
+        # Add sample size and value labels
+        for i, (bar, value, n) in enumerate(zip(bars2, avg_energy, sample_sizes)):
+            height = bar.get_height()
+            ax2.annotate(f'{value:.3f}\n(n={n})',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 5),
+                        textcoords="offset points",
+                        ha='center', va='bottom',
+                        fontweight='bold')
+        
+        # 3. Plot scheduling latency
+        ax3 = axes[2]
+        bars3 = ax3.bar(x_pos, avg_latency, width=bar_width, yerr=ci_latency, capsize=8,
+                      color=bar_colors, edgecolor=edgecolor, linewidth=1.5, alpha=0.9)
+                      
+        # Add hatching patterns
+        for i, bar in enumerate(bars3):
+            bar.set_hatch(hatch_patterns[i % len(hatch_patterns)])
+            
+        ax3.set_xticks(x_pos)
+        ax3.set_xticklabels([t.capitalize() for t in algorithm_types], fontweight='bold')
+        ax3.set_title('Scheduling Latency', fontweight='bold')
+        ax3.set_ylabel('Scheduling Latency (seconds)', fontweight='bold')
+        ax3.spines['top'].set_visible(False)
+        ax3.spines['right'].set_visible(False)
+        ax3.grid(axis='y', linestyle='--', alpha=0.3)
+        
+        # Add minor ticks for more precise reading
+        ax3.minorticks_on()
+        
+        # Set y limit to start slightly below zero for better visualization
+        ymin = min(0, min(avg_latency) - max(ci_latency) - 0.05 * max(avg_latency))
+        ymax = max(avg_latency) + max(ci_latency) + 0.15 * max(avg_latency)
+        ax3.set_ylim(ymin, ymax)
+        
+        # Add sample size and value labels
+        for i, (bar, value, n) in enumerate(zip(bars3, avg_latency, sample_sizes)):
+            height = bar.get_height()
+            ax3.annotate(f'{value:.2f}\n(n={n})',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 5),
+                        textcoords="offset points", 
+                        ha='center', va='bottom',
+                        fontweight='bold')
+        
+        # Add a caption about confidence intervals
+        fig.suptitle('Carbon-Aware Kubernetes Scheduler Performance Comparison', 
+                   fontsize=20, fontweight='bold', y=0.98)
+        
+        fig.text(0.5, 0.01, 
+                f'Error bars represent {confidence_level*100:.0f}% confidence intervals. '+
+                f'Sample sizes (n) shown for each scheduler type.', 
+                ha='center', va='bottom', fontsize=12, style='italic')
+        
+        # Add figure labels for publication reference (a, b, c)
+        for i, ax in enumerate(axes):
+            ax.text(-0.1, 1.05, chr(97 + i), transform=ax.transAxes, 
+                   size=20, weight='bold')
+        
+        # Ensure proper spacing
+        plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # Leave room for suptitle and caption
+        
+        # Save as publication-quality figure with high DPI
+        plt.savefig(os.path.join(self.comparison_plots_dir, "algorithm_type_comparison.png"), 
+                   dpi=600, bbox_inches='tight')
+        plt.savefig(os.path.join(self.comparison_plots_dir, "algorithm_type_comparison.pdf"), 
+                   format='pdf', bbox_inches='tight')
+        
+        # Save as SVG for perfect vector graphics (ideal for publications)
+        plt.savefig(os.path.join(self.comparison_plots_dir, "algorithm_type_comparison.svg"), 
+                   format='svg', bbox_inches='tight')
         plt.close()
         
     def analyze_metrics(self) -> None:

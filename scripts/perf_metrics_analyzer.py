@@ -10,11 +10,23 @@ and generates visualizations showing how these metrics change over time.
 import argparse
 import csv
 import datetime
-import matplotlib.pyplot as plt
 import os
 import re
+import numpy as np
+if not hasattr(np, "Inf"):
+    np.__dict__["Inf"] = np.inf
+    print("Applied NumPy compatibility patch for np.Inf")
+
 import sys
 from collections import defaultdict
+
+# Apply NumPy compatibility fix before importing matplotlib
+import numpy as np
+if not hasattr(np, 'Inf'):
+    np.__dict__['Inf'] = np.inf
+    print("Applied NumPy compatibility patch for np.Inf")
+
+import matplotlib.pyplot as plt
 
 def parse_log_file(log_file_path):
     """Parse log file to extract performance metrics."""
