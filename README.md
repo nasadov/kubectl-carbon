@@ -109,7 +109,8 @@ This project includes tools to help evaluate the carbon-aware scheduler against 
     ./carbon-aware & # Run in the background
     ```
 3.  **Forecast File:** Make sure the carbon intensity forecast file (e.g., `all_forecasts.json`) is available at the location expected by the `collect_metrics.py` script (default: `/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/all_forecasts.json`) or specify its path using the `--forecast-file` option when running benchmarks.
-4.  **Python Dependencies:** Ensure required Python packages (`matplotlib`, `numpy`) are installed for metrics analysis and plotting:
+4.  **Output Directories:** The system will automatically create necessary output directories, including `/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/experiments/` for vanilla placement CSV files.
+5.  **Python Dependencies:** Ensure required Python packages (`matplotlib`, `numpy`) are installed for metrics analysis and plotting:
     ```bash
     pip install matplotlib numpy
     ```
