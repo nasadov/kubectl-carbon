@@ -374,8 +374,8 @@ metadata:
   name: node-heartbeat-with-lease
 spec:
   delay:
-    durationMilliseconds: 500
-    jitterDurationMilliseconds: 508
+    durationMilliseconds: 166
+    jitterDurationMilliseconds: 168
   immediateNextStage: false
   next:
     statusSubresource: status
@@ -518,8 +518,8 @@ metadata:
   name: node-heartbeat-with-lease
 spec:
   delay:
-    durationMilliseconds: 500
-    jitterDurationMilliseconds: 508
+    durationMilliseconds: 166
+    jitterDurationMilliseconds: 168
   immediateNextStage: false
   next:
     statusSubresource: status
@@ -586,7 +586,7 @@ spec:
       operator: 'DoesNotExist'
   weight: 1
   delay:
-    durationMilliseconds: 4
+    durationMilliseconds: 1
   next:
     delete: true
 ---
@@ -679,7 +679,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 3000
+    durationMilliseconds: 1000
   next:
     delete: true  
 ---
@@ -701,7 +701,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 6000
+    durationMilliseconds: 2000
   next:
     delete: true  
 ---
@@ -723,7 +723,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 9000
+    durationMilliseconds: 3000
   next:
     delete: true  
 ---
@@ -745,7 +745,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 12000
+    durationMilliseconds: 4000
   next:
     delete: true  
 ---
@@ -767,7 +767,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 15000
+    durationMilliseconds: 5000
   next:
     delete: true  
 ---
@@ -789,7 +789,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 18000
+    durationMilliseconds: 6000
   next:
     delete: true  
 ---
@@ -811,7 +811,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 21000
+    durationMilliseconds: 7000
   next:
     delete: true  
 ---
@@ -833,7 +833,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 24000
+    durationMilliseconds: 8000
   next:
     delete: true  
 ---
@@ -855,7 +855,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 27000
+    durationMilliseconds: 9000
   next:
     delete: true  
 ---
@@ -877,7 +877,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 30000
+    durationMilliseconds: 10000
   next:
     delete: true  
 ---
@@ -899,7 +899,7 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 33000
+    durationMilliseconds: 11000
   next:
     delete: true  
 ---
@@ -921,6 +921,6 @@ spec:
       operator: 'Exists'
   weight: 1
   delay:
-    durationMilliseconds: 36000
+    durationMilliseconds: 12000
   next:
     delete: true        

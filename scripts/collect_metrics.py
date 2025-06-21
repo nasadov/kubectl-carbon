@@ -669,7 +669,7 @@ class CarbonMetricsCollector:
             # Write metrics to CSV files for real-time analysis
             self._write_latest_metrics_to_csv(node_metrics, "nodes")
             self._write_latest_metrics_to_csv(pod_metrics, "pods")
-            self._write_latest
+            self._write_latest_metrics_to_csv(carbon_metrics_list, "carbon_metrics")
             self._write_latest_metrics_to_csv([performance_metrics], "performance")
             
             # Write vanilla session CSVs if running vanilla algorithm
@@ -751,6 +751,15 @@ class CarbonMetricsCollector:
         
         self.log("Metrics collection completed")
         self.save_results()
+        
+        # Generate vanilla placement session CSV for vanilla experiments
+        if self._is_vanilla_algorithm():
+            self.log("Generating vanilla placement session CSV for post-experiment analysis...")
+            if self.generate_vanilla_placement_from_json_data():
+                placement_csv_path = "/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/experiments/vanilla_placement_session.csv"
+                self.log(f"✓ VANILLA PLACEMENT CSV SAVED TO: {placement_csv_path}")
+            else:
+                self.log("⚠ Failed to generate vanilla placement CSV")
         
     def save_results(self) -> None:
         """Save all collected metrics to files."""
@@ -1024,8 +1033,8 @@ class CarbonMetricsCollector:
                     }
             
             # Process scheduling events to extract placements
-            placement_data = []
-            tracked_pods = set()
+            # Use a dictionary to track first placement per microservice (not per pod)
+            microservice_placements = {}
             
             for event in scheduling_data:
                 if event.get("reason") != "Scheduled":
@@ -1038,6 +1047,23 @@ class CarbonMetricsCollector:
                 if not pod_name:
                     continue
                 
+                # Extract microservice base name from pod name
+                # Pod names are like: m004-duration-3h-deadline-4h-67958f87f-fmbvc
+                # OR word-based names like: four-duration-1h-deadline-2h-77c57c9559-kxwk2
+                # We want the microservice name: m004-duration-3h-deadline-4h or four-duration-1h-deadline-2h
+                import re
+                microservice_match = re.match(r'^((?:m\d+|one|two|three|four|five|six|seven|eight|nine|ten)-duration-\d+h-deadline-\d+h)', pod_name)
+                if not microservice_match:
+                    # Skip pods that don't match expected microservice naming pattern
+                    self.log(f"Warning: Pod {pod_name} doesn't match expected microservice naming pattern")
+                    continue
+                
+                microservice_name = microservice_match.group(1)
+                
+                # Skip if we already have a placement for this microservice
+                if microservice_name in microservice_placements:
+                    continue
+                
                 # Parse node name from message: "Successfully assigned namespace/pod-name to node-name"
                 node_name = None
                 if "assigned" in message and " to " in message:
@@ -1048,40 +1074,19 @@ class CarbonMetricsCollector:
                 if not node_name:
                     continue
                 
-                # Check if we've already tracked this pod
-                pod_id = f"{pod_name}@{node_name}"
-                if pod_id in tracked_pods:
-                    continue
-                
-                tracked_pods.add(pod_id)
-                
-                # Extract duration from pod name
-                import re
+                # Extract duration from microservice name
                 duration = 1.0
-                duration_match = re.search(r'duration-(\d+)h', pod_name)
+                duration_match = re.search(r'duration-(\d+)h', microservice_name)
                 if duration_match:
                     try:
                         duration = float(duration_match.group(1))
                     except (ValueError, TypeError):
                         duration = 1.0
                 
-                # Calculate start slot from event timestamp
-                event_timestamp = event.get("timestamp")
-                start_slot = 1  # Default
-                
-                if event_timestamp and sim_start_time:
-                    elapsed_real_seconds = event_timestamp - sim_start_time
-                    if elapsed_real_seconds < 0:
-                        elapsed_real_seconds = 0
-                    
-                    # Convert to simulation time
-                    elapsed_sim_seconds = elapsed_real_seconds / shrink_factor if shrink_factor > 1 else elapsed_real_seconds
-                    
-                    # Convert simulation seconds to simulation hours
-                    elapsed_sim_hours = elapsed_sim_seconds / 3600
-                    
-                    # Calculate timeslot (assuming 30-minute timeslots = 0.5 hour slots)
-                    start_slot = max(1, int(elapsed_sim_hours / 0.5) + 1)
+                # Calculate start slot based on microservice name and expected deployment pattern
+                # For vanilla experiments, we need to determine which timeslot this microservice belongs to
+                # based on the microservice number and deployment pattern
+                start_slot = self._calculate_timeslot_from_microservice_name(microservice_name)
                 
                 # Get resource information from pod_resources mapping
                 cpu_request = 0.0
@@ -1090,9 +1095,9 @@ class CarbonMetricsCollector:
                     cpu_request = pod_resources[pod_name].get("cpu_request", 0.0)
                     ram_request = pod_resources[pod_name].get("ram_request", 0.0)
                 
-                # Create placement record
+                # Create placement record for this microservice (use microservice name as ID)
                 placement_record = {
-                    "pod_id": pod_name,
+                    "pod_id": microservice_name,  # Use microservice name instead of full pod name
                     "node_id": node_name,
                     "start_slot": start_slot,
                     "duration": duration,
@@ -1100,7 +1105,11 @@ class CarbonMetricsCollector:
                     "ram_request": ram_request
                 }
                 
-                placement_data.append(placement_record)
+                # Store this microservice placement
+                microservice_placements[microservice_name] = placement_record
+            
+            # Convert dictionary to list for CSV writing
+            placement_data = list(microservice_placements.values())
                 
             # Write the placement data to CSV
             if placement_data:
@@ -1118,7 +1127,8 @@ class CarbonMetricsCollector:
                     writer.writeheader()
                     writer.writerows(placement_data)
                     
-                self.log(f"Generated vanilla placement CSV with {len(placement_data)} pods: {csv_file}")
+                self.log(f"✓ Generated vanilla placement CSV with {len(placement_data)} pods")
+                self.log(f"✓ VANILLA PLACEMENT CSV LOCATION: {csv_file}")
                 return True
             else:
                 self.log("No placement data found to generate CSV")
@@ -1420,8 +1430,14 @@ class CarbonMetricsCollector:
             placement_data: List of placement records with pod placement information
         """
         try:
-            # Use the shared timestamped folder
-            csv_file = os.path.join(self._vanilla_dir, "vanilla_placement_session.csv")
+            # Create or use existing timestamped folder for vanilla placement session
+            if not hasattr(self, '_vanilla_timestamped_folder') or not self._vanilla_timestamped_folder:
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{timestamp}")
+                os.makedirs(self._vanilla_timestamped_folder, exist_ok=True)
+            
+            csv_file = os.path.join(self._vanilla_timestamped_folder, "vanilla_placement_session.csv")
             
             # Define CSV headers matching heuristic placement session format exactly
             headers = ["pod_id", "node_id", "start_slot", "duration", "cpu_request", "ram_request"]
@@ -1432,7 +1448,8 @@ class CarbonMetricsCollector:
                 writer.writeheader()
                 writer.writerows(placement_data)
                 
-            self.log(f"Vanilla placement session CSV written to: {csv_file}")
+            self.log(f"✓ Vanilla placement session CSV written to: {csv_file}")
+            self.log(f"✓ PLACEMENT FILE SAVED: {csv_file}")
             
         except Exception as e:
             self.log(f"Error writing vanilla placement session CSV: {e}")
@@ -1444,8 +1461,14 @@ class CarbonMetricsCollector:
             placement_data: List of new placement records to append
         """
         try:
-            # Use the shared timestamped folder
-            csv_file = os.path.join(self._vanilla_dir, "vanilla_placement_session.csv")
+            # Create or use existing timestamped folder for vanilla placement session
+            if not hasattr(self, '_vanilla_timestamped_folder') or not self._vanilla_timestamped_folder:
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{timestamp}")
+                os.makedirs(self._vanilla_timestamped_folder, exist_ok=True)
+            
+            csv_file = os.path.join(self._vanilla_timestamped_folder, "vanilla_placement_session.csv")
             
             # Define CSV headers matching heuristic placement session format exactly
             headers = ["pod_id", "node_id", "start_slot", "duration", "cpu_request", "ram_request"]
@@ -1516,6 +1539,68 @@ class CarbonMetricsCollector:
         except (ValueError, TypeError):
             return 0.0
 
+    def _calculate_timeslot_from_microservice_name(self, microservice_name: str) -> int:
+        """Calculate the intended timeslot for a microservice based on its name.
+        
+        Based on ACTUAL workload files in /root/carbon-aware-orchestrator/pkg/carbon-aware/workloads-vanilla/:
+        - timeslot_0.yaml (slot 1): one, two, three, four, m004, m005
+        - timeslot_1.yaml (slot 2): m006, m007, m008, m009, m010, m011, m012
+        - timeslot_2.yaml (slot 3): m013, m014, m015, m016, m017, m018
+        - timeslot_3.yaml (slot 4): m019, m020, m021, m022, m023, m024, m025
+        - timeslot_4.yaml (slot 5): m026, m027, m028, m029, m030, m031, m032
+        - timeslot_5.yaml (slot 6): m033, m034, m035, m036, m037, m038
+        - timeslot_6.yaml (slot 7): m039, m040, m041, m042, m043, m044, m045, m046, m047, m048, m049
+        - timeslot_7.yaml (slot 8): m050, m051, m052, m053
+        - timeslot_8.yaml (slot 9): m054, m055, m056, m057, m058, m059, m060, m061
+        - timeslot_9.yaml (slot 10): m062, m063, m064, m065, m066, m067
+        - timeslot_10.yaml (slot 11): m068, m069, m070, m071, m072, m073
+        - timeslot_11.yaml (slot 12): m074, m075, m076, m077, m078, m079, m080, m081, m082, m083, m084, m085
+        """
+        import re
+        
+        # Handle word-based names first
+        if microservice_name.startswith("one-"):
+            return 1
+        elif microservice_name.startswith("two-"):
+            return 1
+        elif microservice_name.startswith("three-"):
+            return 1
+        elif microservice_name.startswith("four-"):
+            return 1
+        
+        # Extract microservice number from name like m004-duration-3h-deadline-4h
+        match = re.match(r'^m(\d+)', microservice_name)
+        if not match:
+            return 1  # Default to slot 1 if we can't parse
+            
+        microservice_num = int(match.group(1))
+        
+        # Map microservice number to timeslot based on ACTUAL file distribution
+        if microservice_num <= 5:  # m004, m005 (plus word names)
+            return 1
+        elif microservice_num <= 12:  # m006-m012
+            return 2
+        elif microservice_num <= 18:  # m013-m018
+            return 3
+        elif microservice_num <= 25:  # m019-m025
+            return 4
+        elif microservice_num <= 32:  # m026-m032
+            return 5
+        elif microservice_num <= 38:  # m033-m038
+            return 6
+        elif microservice_num <= 49:  # m039-m049
+            return 7
+        elif microservice_num <= 53:  # m050-m053
+            return 8
+        elif microservice_num <= 61:  # m054-m061
+            return 9
+        elif microservice_num <= 67:  # m062-m067
+            return 10
+        elif microservice_num <= 73:  # m068-m073
+            return 11
+        else:  # m074-m085
+            return 12
+
     def _is_vanilla_algorithm(self) -> bool:
         """Check if this is a vanilla algorithm experiment."""
         # Check experiment name or directory structure to determine if this is vanilla
@@ -1527,6 +1612,7 @@ def main():
     parser = argparse.ArgumentParser(description='Collect metrics from a carbon-aware scheduled Kubernetes cluster')
     parser.add_argument('--output-dir', required=True, help='Base directory to save metrics data')
     parser.add_argument('--experiment-name', required=True, help='Name of the experiment')
+    parser.add_argument('--interval', type=int, default=60, help='Metrics collection interval in seconds')
     parser.add_argument('--duration', type=int, default=3600, help='Total duration of metrics collection in seconds')
     parser.add_argument('--namespace', default='default', help='Kubernetes namespace to monitor')
     parser.add_argument('--shrink-factor', type=int, default=1, help='Time shrink factor for simulation')
@@ -1539,6 +1625,7 @@ def main():
     collector = CarbonMetricsCollector(
         output_dir=args.output_dir,
         experiment_name=args.experiment_name,
+        collection_interval=args.interval,
         duration=args.duration,
         namespace=args.namespace,
         shrink_factor=args.shrink_factor,

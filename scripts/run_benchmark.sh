@@ -267,7 +267,7 @@ if $COMPARISON_MODE; then
         
         # Run the metrics collection and capture performance logs
         python3 $(dirname "$0")/collect_metrics.py \
-            --name "${EXPERIMENT_NAME}_default" \
+            --experiment-name "${EXPERIMENT_NAME}_default" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -276,7 +276,7 @@ if $COMPARISON_MODE; then
     else
         # Run without capturing metrics
         python3 $(dirname "$0")/collect_metrics.py \
-            --name "${EXPERIMENT_NAME}_default" \
+            --experiment-name "${EXPERIMENT_NAME}_default" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -307,7 +307,7 @@ if $COMPARISON_MODE; then
         
         # Run metrics collection and capture performance logs
         python3 $(dirname "$0")/collect_metrics.py \
-            --name "${EXPERIMENT_NAME}_carbon" \
+            --experiment-name "${EXPERIMENT_NAME}_carbon" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -316,7 +316,7 @@ if $COMPARISON_MODE; then
     else
         # Run without capturing metrics
         python3 $(dirname "$0")/collect_metrics.py \
-            --name "${EXPERIMENT_NAME}_carbon" \
+            --experiment-name "${EXPERIMENT_NAME}_carbon" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -394,7 +394,7 @@ else
         print_message "Capturing performance metrics to ${EXPERIMENT_DIR}/performance.log"
         # Start collector in background, tee output to both performance log and its own log
         python3 "$(dirname "$0")/collect_metrics.py" \
-            --name "${EXPERIMENT_NAME}_${ALGORITHM}" \
+            --experiment-name "${EXPERIMENT_NAME}_${ALGORITHM}" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -404,7 +404,7 @@ else
     else
         # Start collector in background, log to its own file
         python3 "$(dirname "$0")/collect_metrics.py" \
-            --name "${EXPERIMENT_NAME}_${ALGORITHM}" \
+            --experiment-name "${EXPERIMENT_NAME}_${ALGORITHM}" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
