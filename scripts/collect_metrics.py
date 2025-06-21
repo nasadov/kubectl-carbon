@@ -1113,22 +1113,10 @@ class CarbonMetricsCollector:
                 
             # Write the placement data to CSV
             if placement_data:
-                # Use the specified vanilla experiments directory
-                vanilla_experiments_dir = "/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/experiments"
-                os.makedirs(vanilla_experiments_dir, exist_ok=True)
-                csv_file = os.path.join(vanilla_experiments_dir, "vanilla_placement_session.csv")
-                
-                # Define CSV headers
-                headers = ["pod_id", "node_id", "start_slot", "duration", "cpu_request", "ram_request"]
-                
-                # Write CSV file
-                with open(csv_file, 'w', newline='') as file:
-                    writer = csv.DictWriter(file, fieldnames=headers)
-                    writer.writeheader()
-                    writer.writerows(placement_data)
-                    
-                self.log(f"✓ Generated vanilla placement CSV with {len(placement_data)} pods")
-                self.log(f"✓ VANILLA PLACEMENT CSV LOCATION: {csv_file}")
+                # Use the timestamped folder approach
+                self._vanilla_dir = "/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/experiments"
+                os.makedirs(self._vanilla_dir, exist_ok=True)
+                self._write_vanilla_placement_session_csv(placement_data)
                 return True
             else:
                 self.log("No placement data found to generate CSV")
