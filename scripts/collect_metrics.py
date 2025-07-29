@@ -21,6 +21,7 @@ import signal
 import math
 import requests
 import re
+import glob
 from datetime import datetime
 
 class CarbonMetricsCollector:
@@ -790,6 +791,10 @@ class CarbonMetricsCollector:
                 self.log(f"✓ VANILLA PERFORMANCE CSV SAVED TO: {perf_csv_path}")
             else:
                 self.log("⚠ Failed to generate vanilla performance CSV")
+            
+            # Generate final experiment-wide placement summary
+            self.log("Generating final placement summary for vanilla experiment...")
+            self._generate_final_placement_summary_log()
         
     def save_results(self) -> None:
         """Save all collected metrics to files."""
@@ -818,6 +823,130 @@ class CarbonMetricsCollector:
                 writer.writeheader()
             writer.writerows(metrics)
     
+    def _get_pod_count_from_workload(self) -> int:
+        """
+        Get the total number of pods from the workloads-vanilla/timeslot_11.yaml file.
+        
+        Returns:
+            int: Total number of pods (adds 1 to the highest pod number since they start at m000)
+            
+        Raises:
+            FileNotFoundError: If the workload file doesn't exist
+            ValueError: If no pod numbers found in the file
+            Exception: For other file reading errors
+        """
+        workload_file = "/root/carbon-aware-orchestrator/pkg/carbon-aware/workloads-vanilla/timeslot_11.yaml"
+        
+        if not os.path.exists(workload_file):
+            raise FileNotFoundError(f"Workload file not found: {workload_file}")
+        
+        try:
+            with open(workload_file, 'r') as f:
+                content = f.read()
+        except Exception as e:
+            raise Exception(f"Error reading workload file {workload_file}: {e}")
+        
+        # Find all pod numbers (e.g., m000, m001, m046)
+        pod_numbers = re.findall(r'm(\d{3})', content)
+        if not pod_numbers:
+            raise ValueError(f"No pod numbers found in {workload_file}")
+        
+        # Get the highest pod number and add 1 (since they start at m000)
+        max_pod_num = max(int(num) for num in pod_numbers)
+        total_pods = max_pod_num + 1
+        
+        self.log(f"Found {total_pods} pods in workload (highest pod: m{max_pod_num:03d})")
+        return total_pods
+
+    def _generate_final_placement_summary_log(self) -> None:
+        """
+        Generate a final placement summary log for the entire experiment.
+        Uses total pod count from timeslot files and analyzes all placement data from the experiment.
+        """
+        try:
+            if not hasattr(self, '_vanilla_timestamped_folder') or not self._vanilla_timestamped_folder:
+                self.log("No vanilla timestamped folder found, skipping placement summary")
+                return
+                
+            # Get total pods from timeslot files
+            try:
+                total_pods_from_timeslot = self._get_pod_count_from_workload()
+            except (FileNotFoundError, ValueError, Exception) as e:
+                self.log(f"Error getting pod count from workload: {e}")
+                self.log("Cannot generate placement summary without valid pod count")
+                return
+            
+            # Read all placement data from the CSV file
+            csv_file = os.path.join(self._vanilla_timestamped_folder, "vanilla_placement_session.csv")
+            if not os.path.exists(csv_file):
+                self.log("No placement CSV found, skipping placement summary")
+                return
+                
+            placement_data = []
+            with open(csv_file, 'r') as f:
+                reader = csv.DictReader(f)
+                placement_data = list(reader)
+            
+            # Count unique successfully placed pods by analyzing unique pod names
+            unique_placed_pods = set()
+            unique_unplaced_pods = set() 
+            node_counts = {}
+            
+            for record in placement_data:
+                pod_id = record.get('pod_id', '').strip()
+                node_id = record.get('node_id', 'unscheduled').strip()
+                
+                if node_id and node_id != 'unscheduled' and node_id != '':
+                    # Pod was successfully placed on a node
+                    unique_placed_pods.add(pod_id)
+                else:
+                    # Pod was not placed (unscheduled or empty node_id)
+                    unique_unplaced_pods.add(pod_id)
+                
+                # Count placement attempts per node (including duplicates for analysis)
+                node_counts[node_id] = node_counts.get(node_id, 0) + 1
+            
+            # Calculate final counts based on unique pod names
+            successful_count = len(unique_placed_pods)
+            attempted_placement_count = len(unique_placed_pods.union(unique_unplaced_pods))
+            failed_count = total_pods_from_timeslot - successful_count
+            success_rate = (successful_count / total_pods_from_timeslot * 100) if total_pods_from_timeslot > 0 else 0
+            
+            # Log detailed placement analysis
+            self.log(f"Placement analysis: Found {attempted_placement_count} pods with placement attempts out of {total_pods_from_timeslot} total pods in timeslot")
+            self.log(f"Unique successfully placed pods: {sorted(list(unique_placed_pods))}")
+            if unique_unplaced_pods:
+                self.log(f"Unique unplaced pods: {sorted(list(unique_unplaced_pods))}")
+            
+            log_content = f"""Vanilla Experiment Placement Summary
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+Experiment-Wide Pod Placement Statistics:
+- Total pods in timeslot_11.yaml: {total_pods_from_timeslot}
+- Unique pods successfully placed: {successful_count}
+- Pods not placed: {failed_count}
+- Success rate: {successful_count}/{total_pods_from_timeslot} = {success_rate:.1f}%
+
+Unique Successfully Placed Pods:
+{', '.join(sorted(list(unique_placed_pods))) if unique_placed_pods else 'None'}
+
+Node Placement Distribution (including duplicates):
+"""
+            
+            # Add per-node placement counts
+            for node_id, count in sorted(node_counts.items()):
+                log_content += f"- {node_id}: {count} pods\n"
+            
+            log_file = os.path.join(self._vanilla_timestamped_folder, "placement_summary.log")
+            with open(log_file, 'w') as f:
+                f.write(log_content)
+            
+            self.log(f"Final placement summary saved to: {log_file}")
+            self.log(f"Experiment placement summary: {successful_count}/{total_pods_from_timeslot} pods placed successfully ({success_rate:.1f}%)")
+            
+        except Exception as e:
+            self.log(f"Error generating final placement summary: {e}")
+
     def _write_vanilla_session_csv(self, session_data: Dict[str, Any]) -> None:
         """Write vanilla session performance data to CSV file matching heuristic format."""
         # Use the shared timestamped folder
@@ -856,7 +985,12 @@ class CarbonMetricsCollector:
             if not hasattr(self, '_vanilla_timestamped_folder') or not self._vanilla_timestamped_folder:
                 import datetime
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{timestamp}")
+                try:
+                    pod_count = self._get_pod_count_from_workload()
+                except (FileNotFoundError, ValueError, Exception) as e:
+                    self.log(f"Error getting pod count for folder naming: {e}")
+                    pod_count = "unknown"
+                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{pod_count}pods_{timestamp}")
                 os.makedirs(self._vanilla_timestamped_folder, exist_ok=True)
             
             csv_file = os.path.join(self._vanilla_timestamped_folder, "vanilla_perf_session.csv")
@@ -1253,7 +1387,12 @@ class CarbonMetricsCollector:
             # Create timestamped folder for results
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             vanilla_dir = "/root/carbon-aware-orchestrator/pkg/carbon-aware/server-python/experiments"
-            vanilla_folder = os.path.join(vanilla_dir, f"vanilla_{timestamp}")
+            try:
+                pod_count = self._get_pod_count_from_workload()
+            except (FileNotFoundError, ValueError, Exception) as e:
+                self.log(f"Error getting pod count for folder naming: {e}")
+                pod_count = "unknown"
+            vanilla_folder = os.path.join(vanilla_dir, f"vanilla_{pod_count}pods_{timestamp}")
             os.makedirs(vanilla_folder, exist_ok=True)
             
             # Load performance data
@@ -1764,7 +1903,12 @@ class CarbonMetricsCollector:
             if not hasattr(self, '_vanilla_timestamped_folder') or not self._vanilla_timestamped_folder:
                 from datetime import datetime
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{timestamp}")
+                try:
+                    pod_count = self._get_pod_count_from_workload()
+                except (FileNotFoundError, ValueError, Exception) as e:
+                    self.log(f"Error getting pod count for folder naming: {e}")
+                    pod_count = "unknown"
+                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{pod_count}pods_{timestamp}")
                 os.makedirs(self._vanilla_timestamped_folder, exist_ok=True)
             
             csv_file = os.path.join(self._vanilla_timestamped_folder, "vanilla_placement_session.csv")
@@ -1795,7 +1939,12 @@ class CarbonMetricsCollector:
             if not hasattr(self, '_vanilla_timestamped_folder') or not self._vanilla_timestamped_folder:
                 from datetime import datetime
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{timestamp}")
+                try:
+                    pod_count = self._get_pod_count_from_workload()
+                except (FileNotFoundError, ValueError, Exception) as e:
+                    self.log(f"Error getting pod count for folder naming: {e}")
+                    pod_count = "unknown"
+                self._vanilla_timestamped_folder = os.path.join(self._vanilla_dir, f"vanilla_{pod_count}pods_{timestamp}")
                 os.makedirs(self._vanilla_timestamped_folder, exist_ok=True)
             
             csv_file = os.path.join(self._vanilla_timestamped_folder, "vanilla_placement_session.csv")
