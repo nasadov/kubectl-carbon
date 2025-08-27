@@ -673,7 +673,7 @@ class CarbonMetricsCollector:
             # Write metrics to CSV files for real-time analysis
             self._write_latest_metrics_to_csv(node_metrics, "nodes")
             self._write_latest_metrics_to_csv(pod_metrics, "pods")
-            self._write_latest_metrics_to_csv(carbon_metrics_list, "carbon_metrics")
+            self._write_latest_metrics_to_csv([carbon_metrics], "carbon_metrics")
             self._write_latest_metrics_to_csv([performance_metrics], "performance")
             
             # Write vanilla session CSVs if running vanilla algorithm
@@ -1717,8 +1717,8 @@ Node Placement Distribution (including duplicates):
             # Convert simulation seconds to simulation hours
             elapsed_sim_hours = elapsed_sim_seconds / 3600
             
-            # Calculate timeslot (assuming 30-minute timeslots = 0.5 hour slots)
-            timeslot = max(1, int(elapsed_sim_hours / 0.5) + 1)
+            # Calculate timeslot (using 60-minute timeslots = 1.0 hour slots)
+            timeslot = max(1, int(elapsed_sim_hours / 1.0) + 1)
             
             return timeslot
             
