@@ -31,6 +31,8 @@ CALL_INTERVAL=3600       # Default interval between workload submissions (3600 s
 WORKLOADS_BASE_DIR="/root/carbon-aware-orchestrator/pkg/carbon-aware"
 # Always capture and analyze performance metrics
 CAPTURE_PERF_METRICS=true
+AUTO_STOP=false
+NON_INTERACTIVE=false
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -61,7 +63,12 @@ get_workloads_dir() {
 run_workload_script() {
     local algorithm="$1"
     local output_dir="$2"
-    local experiment_dir="${output_dir}/${EXPERIMENT_NAME}_${algorithm}"
+    local experiment_dir
+    if [ "$algorithm" = "vanilla" ]; then
+        experiment_dir="${output_dir}/${EXPERIMENT_NAME}"
+    else
+        experiment_dir="${output_dir}/${EXPERIMENT_NAME}_${algorithm}"
+    fi
     local log_file="${experiment_dir}/performance.log"
     
     print_message "Running with algorithm: $algorithm"
@@ -148,6 +155,8 @@ usage() {
     echo "  -F, --forecast FILE      Path to carbon intensity forecast file"
     echo "  -h, --help               Display this help message"
     echo "  --call-interval SECONDS  Interval between workload submissions in simulation seconds (default: 3600)"
+    echo "  --auto-stop              Non-interactive: stop metrics collector automatically after workload applies"
+    echo "  --non-interactive        Non-interactive: auto-confirm prompts (e.g., KWOK settings)"
     exit 1
 }
 
@@ -197,6 +206,14 @@ while [[ $# -gt 0 ]]; do
         --call-interval)
             CALL_INTERVAL="$2"
             shift 2
+            ;;
+        --auto-stop)
+            AUTO_STOP=true
+            shift
+            ;;
+        --non-interactive)
+            NON_INTERACTIVE=true
+            shift
             ;;
         *)
             echo "Unknown option: $1"
@@ -365,25 +382,33 @@ else
     DEFAULT_SHRINK_FACTOR=60
     if [ "$SHRINK_FACTOR" != "$DEFAULT_SHRINK_FACTOR" ]; then
         print_message "Detected non-default shrink factor. Updating KWOK timing settings..."
-        
-        # Check if user wants to update KWOK settings
-        read -p "Update KWOK timing settings for shrink factor ${SHRINK_FACTOR}? [Y/n] " -n 1 -r UPDATE_KWOK
-        echo # Move to a new line
-        
-        if [[ $UPDATE_KWOK =~ ^[Yy]$ ]] || [[ -z $UPDATE_KWOK ]]; then
-            # Run the script to update KWOK settings
-            "$(dirname "$0")/apply_kwok_settings.sh" --shrink-factor "$SHRINK_FACTOR" || {
+        if [ "$NON_INTERACTIVE" = true ]; then
+            "$(dirname "$0")/apply_kwok_settings.sh" --shrink-factor "$SHRINK_FACTOR" --no-restart || {
                 print_error "Failed to update KWOK settings. Exiting."
                 exit 1
             }
         else
-            print_warning "KWOK timing settings not updated. Pod durations may not match simulation time."
-            print_warning "To update manually, run: $(dirname "$0")/apply_kwok_settings.sh --shrink-factor $SHRINK_FACTOR"
+            # Check if user wants to update KWOK settings
+            read -p "Update KWOK timing settings for shrink factor ${SHRINK_FACTOR}? [Y/n] " -n 1 -r UPDATE_KWOK
+            echo # Move to a new line
+            if [[ $UPDATE_KWOK =~ ^[Yy]$ ]] || [[ -z $UPDATE_KWOK ]]; then
+                "$(dirname "$0")/apply_kwok_settings.sh" --shrink-factor "$SHRINK_FACTOR" || {
+                    print_error "Failed to update KWOK settings. Exiting."
+                    exit 1
+                }
+            else
+                print_warning "KWOK timing settings not updated. Pod durations may not match simulation time."
+                print_warning "To update manually, run: $(dirname "$0")/apply_kwok_settings.sh --shrink-factor $SHRINK_FACTOR"
+            fi
         fi
     fi
     
     # Set up experiment directory
-    EXPERIMENT_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}_${ALGORITHM}"
+    if [ "$ALGORITHM" = "vanilla" ]; then
+        EXPERIMENT_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}"
+    else
+        EXPERIMENT_DIR="${OUTPUT_DIR}/${EXPERIMENT_NAME}_${ALGORITHM}"
+    fi
     mkdir -p "$EXPERIMENT_DIR"
     
     # Start metrics collection in the background
@@ -393,8 +418,9 @@ else
     if [ "$CAPTURE_PERF_METRICS" = true ]; then
         print_message "Capturing performance metrics to ${EXPERIMENT_DIR}/performance.log"
         # Start collector in background, tee output to both performance log and its own log
+        if [ "$ALGORITHM" = "vanilla" ]; then EXP_NAME_FOR_COLLECTOR="${EXPERIMENT_NAME}"; else EXP_NAME_FOR_COLLECTOR="${EXPERIMENT_NAME}_${ALGORITHM}"; fi
         python3 "$(dirname "$0")/collect_metrics.py" \
-            --experiment-name "${EXPERIMENT_NAME}_${ALGORITHM}" \
+            --experiment-name "$EXP_NAME_FOR_COLLECTOR" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -403,8 +429,9 @@ else
         COLLECTOR_PID=$! # Capture the PID of the background process
     else
         # Start collector in background, log to its own file
+        if [ "$ALGORITHM" = "vanilla" ]; then EXP_NAME_FOR_COLLECTOR="${EXPERIMENT_NAME}"; else EXP_NAME_FOR_COLLECTOR="${EXPERIMENT_NAME}_${ALGORITHM}"; fi
         python3 "$(dirname "$0")/collect_metrics.py" \
-            --experiment-name "${EXPERIMENT_NAME}_${ALGORITHM}" \
+            --experiment-name "$EXP_NAME_FOR_COLLECTOR" \
             --interval "$COLLECTION_INTERVAL" \
             --namespace "$NAMESPACE" \
             --output-dir "$OUTPUT_DIR" \
@@ -422,14 +449,18 @@ else
     
     print_message "Workload application finished."
 
-    # Instead of automatically terminating the collector, inform user to press Ctrl+C when ready
-    print_message "Metrics collector is still running in the background and collecting data."
-    print_message "Press Ctrl+C when you want to stop collection and save the results."
+    if [ "$AUTO_STOP" = true ]; then
+        print_message "Auto-stop enabled; stopping metrics collector and proceeding to analysis..."
+        kill "$COLLECTOR_PID" 2>/dev/null || true
+    else
+        # Instead of automatically terminating the collector, inform user to press Ctrl+C when ready
+        print_message "Metrics collector is still running in the background and collecting data."
+        print_message "Press Ctrl+C when you want to stop collection and save the results."
+        # Wait for the collector process to finish (will happen when user presses Ctrl+C)
+        wait $COLLECTOR_PID
+    fi
     
-    # Wait for the collector process to finish (will happen when user presses Ctrl+C)
-    wait $COLLECTOR_PID
-    
-    print_message "Metrics collector terminated by user. Processing results..."
+    print_message "Metrics collection stopped. Processing results..."
 
     # Check if workload script failed
     if [ $WORKLOAD_EXIT_CODE -ne 0 ]; then
