@@ -89,6 +89,11 @@ if [ $# -ge 2 ]; then
     fi
 fi
 
+# If call interval is zero or negative, default to 3600 simulation seconds
+if [ -z "${CALL_INTERVAL}" ] || [ "${CALL_INTERVAL}" -le 0 ]; then
+    CALL_INTERVAL=3600
+fi
+
 # Set workloads directory based on algorithm type
 if [ -n "$CUSTOM_WORKLOADS_DIR" ]; then
     # Use custom directory if specified
@@ -143,6 +148,8 @@ total_files=${#yaml_files[@]}
 echo "Found $total_files files to process in sequence"
 
 # Process each file with the specified interval
+series_start_ns=$(date +%s%N)
+echo "[timing] series_start_ns=${series_start_ns}"
 for ((i=0; i<total_files; i++)); do
     yaml_file="${yaml_files[$i]}"
     
@@ -150,20 +157,32 @@ for ((i=0; i<total_files; i++)); do
     echo "Processing: $(basename "$yaml_file")"
     
     # Submit the current file with the appropriate command
+    apply_start_ns=$(date +%s%N)
+    echo "[timing] timeslot=$i phase=apply_start ns=${apply_start_ns} file=$(basename \"$yaml_file\")"
     if [ "$ALGORITHM" == "vanilla" ]; then
         # For vanilla, use regular kubectl apply
         ${KUBECTL_CMD} apply -f "$yaml_file"
+        apply_rc=$?
     else
         # For carbon-aware schedulers, use kubectl carbon with shrink factor
         ${KUBECTL_CMD} -f "$yaml_file" -w "$SHRINK_FACTOR"
+        apply_rc=$?
     fi
+    apply_end_ns=$(date +%s%N)
+    echo "[timing] timeslot=$i phase=apply_end ns=${apply_end_ns} rc=${apply_rc}"
+    echo "[timing] timeslot=$i metric=apply_duration_ms value=$(( (apply_end_ns-apply_start_ns)/1000000 ))"
     
     echo "---"
     
     # If this isn't the last file, wait before processing the next one
     if [ $i -lt $((total_files-1)) ]; then
         echo "Waiting ${CALL_INTERVAL} simulation seconds (${REAL_SLEEP_TIME} real seconds) before processing next timeslot..."
+        sleep_start_ns=$(date +%s%N)
+        echo "[timing] timeslot=$i phase=sleep_start ns=${sleep_start_ns} real_sleep_s=${REAL_SLEEP_TIME}"
         sleep $REAL_SLEEP_TIME
+        sleep_end_ns=$(date +%s%N)
+        echo "[timing] timeslot=$i phase=sleep_end ns=${sleep_end_ns}"
+        echo "[timing] timeslot=$i metric=sleep_duration_ms value=$(( (sleep_end_ns-sleep_start_ns)/1000000 ))"
     fi
 done
 
@@ -180,4 +199,7 @@ for ((hour=1; hour<=12; hour++)); do
 done
 
 echo "===== $(date): Extended metrics collection completed ====="
+series_end_ns=$(date +%s%N)
+echo "[timing] series_end_ns=${series_end_ns}"
+echo "[timing] series_total_duration_ms=$(( (series_end_ns-series_start_ns)/1000000 ))"
 echo "Experiment completed successfully"

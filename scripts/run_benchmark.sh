@@ -444,10 +444,46 @@ else
     
     # Run the workload script (this will run in the foreground)
     print_message "Phase 2: Applying workload..."
+    # Default call interval to 3600 simulation seconds if unset or <=0
+    if [ -z "${CALL_INTERVAL}" ] || [ "${CALL_INTERVAL}" -le 0 ]; then
+        CALL_INTERVAL=3600
+    fi
+    # Start bind-time watcher and presence watcher for vanilla
+    if [ "$ALGORITHM" = "vanilla" ]; then
+        BIND_WATCHER_LOG="${EXPERIMENT_DIR}/bind_watcher.log"
+        print_message "Starting bind-time watcher (logging to ${BIND_WATCHER_LOG})..."
+        python3 /root/carbon-aware-orchestrator/scripts/bind_watcher.py \
+            --perf-log "${EXPERIMENT_DIR}/performance.log" \
+            --binds-out "${EXPERIMENT_DIR}/pod_binds.ndjson" \
+            >"${BIND_WATCHER_LOG}" 2>&1 &
+        BIND_WATCHER_PID=$!
+        print_message "Bind watcher started in background (PID: ${BIND_WATCHER_PID})"
+
+        PRESENCE_WATCH_LOG="${EXPERIMENT_DIR}/presence_watcher.log"
+        print_message "Starting presence watcher (logging to ${PRESENCE_WATCH_LOG})..."
+        python3 /root/carbon-aware-orchestrator/scripts/cluster_state_watcher.py \
+            --perf-log "${EXPERIMENT_DIR}/performance.log" \
+            --presence-out "${EXPERIMENT_DIR}/pod_presence.ndjson" \
+            --interval 0.5 \
+            >"${PRESENCE_WATCH_LOG}" 2>&1 &
+        PRESENCE_WATCHER_PID=$!
+        print_message "Presence watcher started in background (PID: ${PRESENCE_WATCHER_PID})"
+    fi
     run_workload_script "$ALGORITHM" "$OUTPUT_DIR"
     WORKLOAD_EXIT_CODE=$? # Capture exit code of workload script
     
     print_message "Workload application finished."
+    # Stop watchers if running
+    if [ "$ALGORITHM" = "vanilla" ]; then
+        if [ -n "${BIND_WATCHER_PID:-}" ]; then
+            print_message "Stopping bind-time watcher (PID: ${BIND_WATCHER_PID})"
+            kill "${BIND_WATCHER_PID}" 2>/dev/null || true
+        fi
+        if [ -n "${PRESENCE_WATCHER_PID:-}" ]; then
+            print_message "Stopping presence watcher (PID: ${PRESENCE_WATCHER_PID})"
+            kill "${PRESENCE_WATCHER_PID}" 2>/dev/null || true
+        fi
+    fi
 
     if [ "$AUTO_STOP" = true ]; then
         print_message "Auto-stop enabled; stopping metrics collector and proceeding to analysis..."
@@ -478,6 +514,33 @@ else
         analyze_perf_metrics "${EXPERIMENT_DIR}"
     fi
     
+    # Generate bind-based and presence-based placement CSVs for vanilla by default
+    if [ "$ALGORITHM" = "vanilla" ]; then
+        print_message "Generating bind-based placement CSV from Scheduled events..."
+        VANILLA_WL_DIR="${WORKLOADS_BASE_DIR}/workloads-vanilla/"
+        python3 /root/carbon-aware-orchestrator/scripts/generate_bind_based_csv.py \
+            --binds-ndjson "${EXPERIMENT_DIR}/pod_binds.ndjson" \
+            --workloads-dir "${VANILLA_WL_DIR}" \
+            --experiment-dir "${EXPERIMENT_DIR}" || true
+        if [ -f "${EXPERIMENT_DIR}/vanilla_placement_session.csv" ]; then
+            LINES=$(wc -l < "${EXPERIMENT_DIR}/vanilla_placement_session.csv" || echo 0)
+            print_message "Bind-based placement CSV ready: ${EXPERIMENT_DIR}/vanilla_placement_session.csv (rows: $((LINES-1)))"
+        else
+            print_warning "Bind-based placement CSV was not generated. Check ${EXPERIMENT_DIR}/bind_watcher.log"
+        fi
+
+        print_message "Generating presence-based placement CSV from polled cluster state..."
+        python3 /root/carbon-aware-orchestrator/scripts/generate_presence_based_csv.py \
+            --presence-ndjson "${EXPERIMENT_DIR}/pod_presence.ndjson" \
+            --workloads-dir "${VANILLA_WL_DIR}" \
+            --experiment-dir "${EXPERIMENT_DIR}" || true
+        if [ -f "${EXPERIMENT_DIR}/vanilla_placement_session_presence.csv" ]; then
+            LINES=$(wc -l < "${EXPERIMENT_DIR}/vanilla_placement_session_presence.csv" || echo 0)
+            print_message "Presence-based placement CSV ready: ${EXPERIMENT_DIR}/vanilla_placement_session_presence.csv (rows: $((LINES-1)))"
+        else
+            print_warning "Presence-based placement CSV was not generated. Check ${EXPERIMENT_DIR}/presence_watcher.log"
+        fi
+    fi
     print_message "Benchmark completed"
     print_message "Results saved to: ${EXPERIMENT_DIR}"
     
